@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: alumnitrack_postgres
+    environment:
+      POSTGRES_DB: tracer_study
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tracer_study"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - alumnitrack_network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: alumnitrack_backend
+    environment:
+      PORT: 8080
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tracer_study
+      JWT_SECRET: alumnitrack_super_secret_jwt_key_2026
+      GIN_MODE: release
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - alumnitrack_network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alumnitrack_frontend
+    depends_on:
+      - backend
+    networks:
+      - alumnitrack_network
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: alumnitrack_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - uploads_data:/app/uploads:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - alumnitrack_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+networks:
+  alumnitrack_network:
+    driver: bridge

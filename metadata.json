@@ -1,0 +1,6 @@
+{
+  "name": "AlumniTrack — Rekap Karir Alumni & Tracer Study",
+  "description": "Platform modern dan terintegrasi untuk rekap karir alumni, tracer study sekolah, pemantauan lulusan, dan pusat karir.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
