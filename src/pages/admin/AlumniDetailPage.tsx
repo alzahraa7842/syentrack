@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, 
   Mail, 
@@ -27,6 +27,14 @@ interface AlumniDetailPageProps {
 
 export const AlumniDetailPage: React.FC<AlumniDetailPageProps> = ({ alumniId, onNavigate }) => {
   const { showToast } = useNotification();
+  const [, setSyncTick] = useState(0);
+
+  useEffect(() => {
+    const sync = () => setSyncTick(t => t + 1);
+    window.addEventListener('alumnitrack_data_changed', sync);
+    return () => window.removeEventListener('alumnitrack_data_changed', sync);
+  }, []);
+
   const alumni = StorageService.getAlumniById(alumniId);
   const careerHistories = StorageService.getCareerHistories(alumniId);
   const documents = StorageService.getDocuments(alumniId);

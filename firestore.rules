@@ -1,0 +1,609 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HELPERS ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSignedInVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedInVerified() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedInVerified() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN') ||
+        request.auth.token.email in ['admin@sekolah.sch.id', 'ani.triastuti@smkn1prestasi.sch.id']
+      );
+    }
+
+    function isOptStr(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isOptNum(data, key) {
+      return !(key in data) || (data[key] is number);
+    }
+
+    function isOptBool(data, key) {
+      return !(key in data) || (data[key] is bool);
+    }
+
+    // --- VALIDATION BLUEPRINTS ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'uid', 'name', 'email', 'role', 'isActive', 'created_at']) &&
+        data.keys().hasOnly([
+          'id', 'uid', 'name', 'email', 'nisn', 'role', 'avatar',
+          'isActive', 'is_google_user', 'receive_email_notifications',
+          'created_at', 'updated_at'
+        ]) &&
+        data.id is number &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.role in ['ADMIN', 'ALUMNI'] &&
+        data.isActive is bool &&
+        data.created_at is string && data.created_at.size() <= 40 &&
+        isOptStr(data, 'nisn', 30) &&
+        isOptStr(data, 'avatar', 250000) &&
+        isOptBool(data, 'is_google_user') &&
+        isOptBool(data, 'receive_email_notifications') &&
+        isOptStr(data, 'updated_at', 40);
+    }
+
+    function isValidAlumniProfile(data) {
+      return data.keys().hasAll([
+          'id', 'user_id', 'name', 'nisn', 'angkatan', 'jurusan',
+          'email', 'status_karir', 'status_tracer', 'privacy_setting',
+          'created_at', 'updated_at'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'user_id', 'uid', 'name', 'nisn', 'angkatan', 'jurusan',
+          'email', 'phone', 'domisili', 'status_karir', 'status_tracer',
+          'privacy_setting', 'avatar', 'linkedin_url', 'is_google_user',
+          'receive_email_notifications', 'job_company', 'job_position',
+          'job_industry', 'job_location', 'job_start_date', 'job_type',
+          'edu_university', 'edu_major', 'edu_degree', 'edu_location',
+          'edu_start_year', 'biz_name', 'biz_field', 'biz_location',
+          'biz_start_year', 'created_at', 'updated_at'
+        ]) &&
+        data.id is number &&
+        data.user_id is number &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.nisn is string && data.nisn.size() >= 1 && data.nisn.size() <= 30 &&
+        data.angkatan is number &&
+        data.jurusan is string && data.jurusan.size() >= 1 && data.jurusan.size() <= 80 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.status_karir in ['Bekerja', 'Kuliah', 'Wirausaha', 'Mencari Kerja', 'Tidak Bekerja', 'Lainnya'] &&
+        data.status_tracer in ['Sudah Mengisi', 'Belum Mengisi', 'Draft'] &&
+        data.privacy_setting in ['PUBLIC', 'ADMIN_ONLY', 'HIDDEN'] &&
+        data.created_at is string && data.created_at.size() <= 40 &&
+        data.updated_at is string && data.updated_at.size() <= 40 &&
+        isOptStr(data, 'uid', 128) &&
+        isOptStr(data, 'phone', 40) &&
+        isOptStr(data, 'domisili', 120) &&
+        isOptStr(data, 'avatar', 250000) &&
+        isOptStr(data, 'linkedin_url', 250) &&
+        isOptBool(data, 'is_google_user') &&
+        isOptBool(data, 'receive_email_notifications') &&
+        isOptStr(data, 'job_company', 160) &&
+        isOptStr(data, 'job_position', 120) &&
+        isOptStr(data, 'job_industry', 120) &&
+        isOptStr(data, 'job_location', 120) &&
+        isOptStr(data, 'job_start_date', 30) &&
+        (!('job_type' in data) || data.job_type in ['Full-time', 'Part-time', 'Freelance', 'Kontrak']) &&
+        isOptStr(data, 'edu_university', 160) &&
+        isOptStr(data, 'edu_major', 120) &&
+        (!('edu_degree' in data) || data.edu_degree in ['D3', 'D4', 'S1', 'S2']) &&
+        isOptStr(data, 'edu_location', 120) &&
+        isOptNum(data, 'edu_start_year') &&
+        isOptStr(data, 'biz_name', 160) &&
+        isOptStr(data, 'biz_field', 120) &&
+        isOptStr(data, 'biz_location', 120) &&
+        isOptNum(data, 'biz_start_year');
+    }
+
+    function isValidCareerStat(data) {
+      return data.keys().hasAll(['alumni_id', 'status_karir', 'angkatan', 'jurusan', 'updated_at']) &&
+        data.keys().hasOnly(['alumni_id', 'uid', 'status_karir', 'angkatan', 'jurusan', 'updated_at']) &&
+        data.alumni_id is number &&
+        data.status_karir in ['Bekerja', 'Kuliah', 'Wirausaha', 'Mencari Kerja', 'Tidak Bekerja', 'Lainnya'] &&
+        data.angkatan is number &&
+        data.jurusan is string && data.jurusan.size() <= 80 &&
+        data.updated_at is string && data.updated_at.size() <= 40 &&
+        isOptStr(data, 'uid', 128);
+    }
+
+    function isValidCareerHistory(data) {
+      return data.keys().hasAll(['id', 'alumni_id', 'year_start', 'is_current', 'position', 'company']) &&
+        data.keys().hasOnly(['id', 'alumni_id', 'uid', 'year_start', 'year_end', 'is_current', 'position', 'company', 'description']) &&
+        data.id is number &&
+        data.alumni_id is number &&
+        data.year_start is number &&
+        data.is_current is bool &&
+        data.position is string && data.position.size() >= 1 && data.position.size() <= 140 &&
+        data.company is string && data.company.size() >= 1 && data.company.size() <= 160 &&
+        isOptStr(data, 'uid', 128) &&
+        isOptNum(data, 'year_end') &&
+        isOptStr(data, 'description', 1000);
+    }
+
+    function isValidDocumentFile(data) {
+      return data.keys().hasAll(['id', 'alumni_id', 'name', 'category', 'file_size_kb', 'upload_date', 'file_url', 'mime_type']) &&
+        data.keys().hasOnly(['id', 'alumni_id', 'uid', 'name', 'category', 'file_size_kb', 'upload_date', 'file_url', 'mime_type']) &&
+        data.id is number &&
+        data.alumni_id is number &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 180 &&
+        data.category in ['CV', 'Portfolio', 'Sertifikat', 'Dokumen Lain'] &&
+        data.file_size_kb is number &&
+        data.upload_date is string && data.upload_date.size() <= 40 &&
+        data.file_url is string && data.file_url.size() <= 450000 &&
+        data.mime_type is string && data.mime_type.size() <= 100 &&
+        isOptStr(data, 'uid', 128);
+    }
+
+    function isValidTracerSurvey(data) {
+      return data.keys().hasAll(['id', 'title', 'description', 'target_angkatan', 'deadline', 'status', 'total_target', 'created_at']) &&
+        data.keys().hasOnly(['id', 'title', 'description', 'target_angkatan', 'deadline', 'status', 'total_target', 'created_at']) &&
+        data.id is number &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.description is string && data.description.size() <= 1000 &&
+        data.target_angkatan is number &&
+        data.deadline is string && data.deadline.size() <= 30 &&
+        data.status in ['Aktif', 'Nonaktif'] &&
+        data.total_target is number &&
+        data.created_at is string && data.created_at.size() <= 40;
+    }
+
+    function isValidTracerQuestion(data) {
+      return data.keys().hasAll(['id', 'survey_id', 'question_text', 'question_type', 'required', 'order']) &&
+        data.keys().hasOnly(['id', 'survey_id', 'question_text', 'question_type', 'options', 'required', 'order', 'section']) &&
+        data.id is number &&
+        data.survey_id is number &&
+        data.question_text is string && data.question_text.size() >= 1 && data.question_text.size() <= 500 &&
+        data.question_type in ['text', 'textarea', 'radio', 'checkbox', 'dropdown', 'rating', 'number', 'date'] &&
+        data.required is bool &&
+        data.order is number &&
+        (!('options' in data) || (data.options is list && data.options.size() <= 30 && (data.options.size() == 0 || data.options[0] is string))) &&
+        isOptStr(data, 'section', 120);
+    }
+
+    function isValidTracerSubmission(data) {
+      return data.keys().hasAll(['id', 'survey_id', 'alumni_id', 'alumni_name', 'angkatan', 'jurusan', 'status', 'submitted_at', 'answers']) &&
+        data.keys().hasOnly(['id', 'survey_id', 'alumni_id', 'uid', 'alumni_name', 'angkatan', 'jurusan', 'status', 'submitted_at', 'answers']) &&
+        data.id is number &&
+        data.survey_id is number &&
+        data.alumni_id is number &&
+        data.alumni_name is string && data.alumni_name.size() <= 120 &&
+        data.angkatan is number &&
+        data.jurusan is string && data.jurusan.size() <= 80 &&
+        data.status in ['Sudah Mengisi', 'Draft'] &&
+        data.submitted_at is string && data.submitted_at.size() <= 40 &&
+        data.answers is map &&
+        isOptStr(data, 'uid', 128);
+    }
+
+    function isValidJobPosting(data) {
+      return data.keys().hasAll(['id', 'title', 'company', 'location', 'type', 'category', 'deadline', 'description', 'status', 'created_at']) &&
+        data.keys().hasOnly([
+          'id', 'title', 'company', 'location', 'type', 'category', 'deadline',
+          'description', 'requirements', 'apply_url', 'contact_email', 'status',
+          'event_date', 'created_at', 'image', 'company_logo', 'posted_by', 'author_uid'
+        ]) &&
+        data.id is number &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.company is string && data.company.size() >= 1 && data.company.size() <= 160 &&
+        data.location is string && data.location.size() <= 120 &&
+        data.type in ['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'] &&
+        data.category in ['Lowongan kerja', 'Beasiswa', 'Magang', 'Event', 'Pelatihan'] &&
+        data.deadline is string && data.deadline.size() <= 30 &&
+        data.description is string && data.description.size() <= 5000 &&
+        data.status in ['Published', 'Draft', 'Archived'] &&
+        data.created_at is string && data.created_at.size() <= 40 &&
+        isOptStr(data, 'requirements', 3000) &&
+        isOptStr(data, 'apply_url', 500) &&
+        isOptStr(data, 'contact_email', 160) &&
+        isOptStr(data, 'event_date', 30) &&
+        isOptStr(data, 'image', 250000) &&
+        isOptStr(data, 'company_logo', 250000) &&
+        isOptStr(data, 'posted_by', 120) &&
+        isOptStr(data, 'author_uid', 128);
+    }
+
+    function isValidForumPost(data) {
+      return data.keys().hasAll(['id', 'author_id', 'author_name', 'author_role', 'title', 'content', 'category', 'likes', 'is_locked', 'created_at', 'comments']) &&
+        data.keys().hasOnly([
+          'id', 'author_id', 'author_uid', 'author_name', 'author_role', 'author_avatar',
+          'title', 'content', 'category', 'likes', 'liked_by_user', 'liked_by_uids',
+          'is_locked', 'created_at', 'comments'
+        ]) &&
+        data.id is number &&
+        data.author_id is number &&
+        data.author_name is string && data.author_name.size() <= 120 &&
+        data.author_role in ['ADMIN', 'ALUMNI'] &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.content is string && data.content.size() >= 1 && data.content.size() <= 5000 &&
+        data.category in ['Karier', 'Kuliah', 'Networking', 'Lowongan', 'Umum'] &&
+        data.likes is number && data.likes >= 0 &&
+        data.is_locked is bool &&
+        data.created_at is string && data.created_at.size() <= 40 &&
+        data.comments is list && data.comments.size() <= 200 &&
+        (data.comments.size() == 0 || data.comments[0] is map) &&
+        isOptStr(data, 'author_uid', 128) &&
+        isOptStr(data, 'author_avatar', 250000) &&
+        isOptBool(data, 'liked_by_user') &&
+        (!('liked_by_uids' in data) || (data.liked_by_uids is list && data.liked_by_uids.size() <= 500 && (data.liked_by_uids.size() == 0 || data.liked_by_uids[0] is string)));
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'title', 'message', 'type', 'is_read', 'created_at']) &&
+        data.keys().hasOnly(['id', 'user_id', 'target_uid', 'target_role', 'title', 'message', 'type', 'is_read', 'read_by_uids', 'created_at', 'link']) &&
+        data.id is number &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 1000 &&
+        data.type in ['tracer', 'profile', 'job', 'announcement', 'forum'] &&
+        data.is_read is bool &&
+        data.created_at is string && data.created_at.size() <= 40 &&
+        isOptNum(data, 'user_id') &&
+        isOptStr(data, 'target_uid', 128) &&
+        (!('target_role' in data) || data.target_role in ['ADMIN', 'ALUMNI', 'ALL']) &&
+        (!('read_by_uids' in data) || (data.read_by_uids is list && data.read_by_uids.size() <= 500 && (data.read_by_uids.size() == 0 || data.read_by_uids[0] is string))) &&
+        isOptStr(data, 'link', 200);
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'user_name', 'user_role', 'activity', 'ip', 'timestamp']) &&
+        data.keys().hasOnly(['id', 'uid', 'user_name', 'user_role', 'activity', 'ip', 'timestamp']) &&
+        data.id is number &&
+        data.user_name is string && data.user_name.size() <= 120 &&
+        data.user_role is string && data.user_role.size() <= 40 &&
+        data.activity is string && data.activity.size() <= 500 &&
+        data.ip is string && data.ip.size() <= 80 &&
+        data.timestamp is string && data.timestamp.size() <= 40 &&
+        isOptStr(data, 'uid', 128);
+    }
+
+    function isValidSchoolSettings(data) {
+      return data.keys().hasAll([
+          'name', 'tagline', 'npsn', 'address', 'email', 'phone',
+          'academic_year', 'tracer_default_deadline_days',
+          'reminder_7_days', 'reminder_3_days', 'reminder_1_day'
+        ]) &&
+        data.keys().hasOnly([
+          'name', 'tagline', 'npsn', 'logo', 'landing_hero_image',
+          'landing_hero_caption', 'address', 'email', 'phone',
+          'academic_year', 'website', 'instagram', 'linkedin',
+          'tracer_default_deadline_days', 'reminder_7_days',
+          'reminder_3_days', 'reminder_1_day'
+        ]) &&
+        data.name is string && data.name.size() <= 160 &&
+        data.tagline is string && data.tagline.size() <= 250 &&
+        data.npsn is string && data.npsn.size() <= 30 &&
+        data.address is string && data.address.size() <= 250 &&
+        data.email is string && data.email.size() <= 160 &&
+        data.phone is string && data.phone.size() <= 40 &&
+        data.academic_year is string && data.academic_year.size() <= 30 &&
+        data.tracer_default_deadline_days is number &&
+        data.reminder_7_days is bool &&
+        data.reminder_3_days is bool &&
+        data.reminder_1_day is bool &&
+        isOptStr(data, 'logo', 250000) &&
+        isOptStr(data, 'landing_hero_image', 250000) &&
+        isOptStr(data, 'landing_hero_caption', 250) &&
+        isOptStr(data, 'website', 200) &&
+        isOptStr(data, 'instagram', 120) &&
+        isOptStr(data, 'linkedin', 120);
+    }
+
+    function isValidGuruBkProfile(data) {
+      return data.keys().hasAll(['id', 'name', 'title', 'updated_at']) &&
+        data.keys().hasOnly(['id', 'name', 'nip', 'title', 'email', 'phone', 'city', 'avatar', 'is_default', 'updated_at']) &&
+        data.id is number &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.title is string && data.title.size() <= 140 &&
+        data.updated_at is string && data.updated_at.size() <= 40 &&
+        isOptStr(data, 'nip', 50) &&
+        isOptStr(data, 'email', 160) &&
+        isOptStr(data, 'phone', 40) &&
+        isOptStr(data, 'city', 80) &&
+        isOptStr(data, 'avatar', 250000) &&
+        isOptBool(data, 'is_default');
+    }
+
+    // --- COLLECTION RULES ---
+
+    // Connection validation probe
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // Admin Registry
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isAdmin());
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // Users (PII isolated to owner or admin)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin() || (isSignedInVerified() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedInVerified() &&
+        isValidId(userId) &&
+        isValidUser(incoming()) &&
+        (isAdmin() || (
+          userId == request.auth.uid &&
+          incoming().uid == request.auth.uid &&
+          incoming().role == 'ALUMNI' &&
+          incoming().isActive == true
+        ));
+      allow update: if isSignedInVerified() &&
+        isValidId(userId) &&
+        isValidUser(incoming()) &&
+        (isAdmin() || (
+          userId == request.auth.uid &&
+          existing().uid == request.auth.uid &&
+          incoming().uid == existing().uid &&
+          incoming().role == existing().role &&
+          incoming().isActive == existing().isActive &&
+          incoming().created_at == existing().created_at &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'nisn', 'avatar', 'is_google_user', 'receive_email_notifications', 'updated_at'
+          ])
+        ));
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // Alumni Profiles (PII protected: owner, admin, or PUBLIC directory entries for verified users)
+    match /alumni_profiles/{alumniId} {
+      allow get: if isValidId(alumniId) && (
+        isAdmin() ||
+        (isSignedInVerified() && (resource.data.uid == request.auth.uid || resource.data.privacy_setting == 'PUBLIC'))
+      );
+      allow list: if isAdmin() || (
+        isSignedInVerified() && (resource.data.uid == request.auth.uid || resource.data.privacy_setting == 'PUBLIC')
+      );
+      allow create: if isSignedInVerified() &&
+        isValidId(alumniId) &&
+        isValidAlumniProfile(incoming()) &&
+        (isAdmin() || incoming().uid == request.auth.uid);
+      allow update: if isSignedInVerified() &&
+        isValidId(alumniId) &&
+        isValidAlumniProfile(incoming()) &&
+        (isAdmin() || (
+          existing().uid == request.auth.uid &&
+          incoming().uid == existing().uid &&
+          incoming().id == existing().id &&
+          incoming().user_id == existing().user_id &&
+          incoming().created_at == existing().created_at &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'nisn', 'angkatan', 'jurusan', 'email', 'phone', 'domisili',
+            'status_karir', 'status_tracer', 'privacy_setting', 'avatar', 'linkedin_url',
+            'is_google_user', 'receive_email_notifications', 'job_company', 'job_position',
+            'job_industry', 'job_location', 'job_start_date', 'job_type', 'edu_university',
+            'edu_major', 'edu_degree', 'edu_location', 'edu_start_year', 'biz_name',
+            'biz_field', 'biz_location', 'biz_start_year', 'updated_at'
+          ])
+        ));
+      allow delete: if isValidId(alumniId) && isAdmin();
+    }
+
+    // Public Zero-PII Career Statistics for Real-Time Landing Page
+    match /alumni_career_stats/{alumniId} {
+      allow get: if isValidId(alumniId);
+      allow list: if resource.data.status_karir is string;
+      allow create: if isSignedInVerified() &&
+        isValidId(alumniId) &&
+        isValidCareerStat(incoming()) &&
+        (isAdmin() || incoming().uid == request.auth.uid);
+      allow update: if isSignedInVerified() &&
+        isValidId(alumniId) &&
+        isValidCareerStat(incoming()) &&
+        (isAdmin() || (
+          existing().uid == request.auth.uid &&
+          incoming().uid == existing().uid &&
+          incoming().alumni_id == existing().alumni_id &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status_karir', 'angkatan', 'jurusan', 'updated_at'])
+        ));
+      allow delete: if isValidId(alumniId) && isAdmin();
+    }
+
+    // Career Histories
+    match /career_histories/{historyId} {
+      allow get: if isValidId(historyId) && (isAdmin() || (isSignedInVerified() && resource.data.uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedInVerified() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedInVerified() &&
+        isValidId(historyId) &&
+        isValidCareerHistory(incoming()) &&
+        (isAdmin() || incoming().uid == request.auth.uid);
+      allow update: if isSignedInVerified() &&
+        isValidId(historyId) &&
+        isValidCareerHistory(incoming()) &&
+        (isAdmin() || (
+          existing().uid == request.auth.uid &&
+          incoming().uid == existing().uid &&
+          incoming().id == existing().id &&
+          incoming().alumni_id == existing().alumni_id &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['year_start', 'year_end', 'is_current', 'position', 'company', 'description'])
+        ));
+      allow delete: if isValidId(historyId) && (isAdmin() || (isSignedInVerified() && resource.data.uid == request.auth.uid));
+    }
+
+    // Alumni Documents (CV, Portfolio, Sertifikat)
+    match /documents/{docId} {
+      allow get: if isValidId(docId) && (isAdmin() || (isSignedInVerified() && resource.data.uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedInVerified() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedInVerified() &&
+        isValidId(docId) &&
+        isValidDocumentFile(incoming()) &&
+        (isAdmin() || incoming().uid == request.auth.uid);
+      allow update: if isSignedInVerified() &&
+        isValidId(docId) &&
+        isValidDocumentFile(incoming()) &&
+        (isAdmin() || (
+          existing().uid == request.auth.uid &&
+          incoming().uid == existing().uid &&
+          incoming().id == existing().id &&
+          incoming().alumni_id == existing().alumni_id &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'file_size_kb', 'upload_date', 'file_url', 'mime_type'])
+        ));
+      allow delete: if isValidId(docId) && (isAdmin() || (isSignedInVerified() && resource.data.uid == request.auth.uid));
+    }
+
+    // Tracer Surveys
+    match /tracer_surveys/{surveyId} {
+      allow get: if isValidId(surveyId) && (isAdmin() || (isSignedInVerified() && resource.data.status == 'Aktif'));
+      allow list: if isAdmin() || (isSignedInVerified() && resource.data.status == 'Aktif');
+      allow create: if isValidId(surveyId) && isAdmin() && isValidTracerSurvey(incoming());
+      allow update: if isValidId(surveyId) && isAdmin() && isValidTracerSurvey(incoming());
+      allow delete: if isValidId(surveyId) && isAdmin();
+    }
+
+    // Tracer Questions
+    match /tracer_questions/{questionId} {
+      allow get: if isValidId(questionId) && isSignedInVerified() && resource.data.survey_id is number;
+      allow list: if isSignedInVerified() && resource.data.survey_id is number;
+      allow create: if isValidId(questionId) && isAdmin() && isValidTracerQuestion(incoming());
+      allow update: if isValidId(questionId) && isAdmin() && isValidTracerQuestion(incoming());
+      allow delete: if isValidId(questionId) && isAdmin();
+    }
+
+    // Tracer Submissions
+    match /tracer_submissions/{submissionId} {
+      allow get: if isValidId(submissionId) && (isAdmin() || (isSignedInVerified() && resource.data.uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedInVerified() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedInVerified() &&
+        isValidId(submissionId) &&
+        isValidTracerSubmission(incoming()) &&
+        (isAdmin() || incoming().uid == request.auth.uid);
+      allow update: if isSignedInVerified() &&
+        isValidId(submissionId) &&
+        isValidTracerSubmission(incoming()) &&
+        (isAdmin() || (
+          existing().uid == request.auth.uid &&
+          incoming().uid == existing().uid &&
+          incoming().id == existing().id &&
+          incoming().survey_id == existing().survey_id &&
+          incoming().alumni_id == existing().alumni_id &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['alumni_name', 'angkatan', 'jurusan', 'status', 'submitted_at', 'answers'])
+        ));
+      allow delete: if isValidId(submissionId) && isAdmin();
+    }
+
+    // Jobs & BKK Events
+    match /jobs/{jobId} {
+      allow get: if isValidId(jobId) && (resource.data.status == 'Published' || isAdmin());
+      allow list: if resource.data.status == 'Published' || isAdmin();
+      allow create: if isSignedInVerified() &&
+        isValidId(jobId) &&
+        isValidJobPosting(incoming()) &&
+        (isAdmin() || (incoming().author_uid == request.auth.uid && incoming().status == 'Published'));
+      allow update: if isSignedInVerified() &&
+        isValidId(jobId) &&
+        isValidJobPosting(incoming()) &&
+        (isAdmin() || (
+          existing().author_uid == request.auth.uid &&
+          incoming().author_uid == existing().author_uid &&
+          incoming().id == existing().id &&
+          incoming().created_at == existing().created_at &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'company', 'location', 'type', 'category', 'deadline',
+            'description', 'requirements', 'apply_url', 'contact_email',
+            'status', 'event_date', 'image', 'company_logo'
+          ])
+        ));
+      allow delete: if isValidId(jobId) && (isAdmin() || (isSignedInVerified() && resource.data.author_uid == request.auth.uid));
+    }
+
+    // Forum Posts
+    match /forum_posts/{postId} {
+      allow get: if isValidId(postId) && isSignedInVerified() && resource.data.category is string;
+      allow list: if isSignedInVerified() && resource.data.category is string;
+      allow create: if isSignedInVerified() &&
+        isValidId(postId) &&
+        isValidForumPost(incoming()) &&
+        (isAdmin() || (
+          incoming().author_uid == request.auth.uid &&
+          incoming().author_role == 'ALUMNI' &&
+          incoming().is_locked == false &&
+          incoming().likes == 0
+        ));
+      allow update: if isSignedInVerified() &&
+        isValidId(postId) &&
+        isValidForumPost(incoming()) &&
+        (isAdmin() ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['likes', 'liked_by_user', 'liked_by_uids'])) ||
+          (!existing().is_locked && incoming().diff(existing()).affectedKeys().hasOnly(['comments']) && incoming().comments.size() >= existing().comments.size())
+        );
+      allow delete: if isValidId(postId) && (isAdmin() || (isSignedInVerified() && resource.data.author_uid == request.auth.uid));
+    }
+
+    // Notifications
+    match /notifications/{notifId} {
+      allow get: if isValidId(notifId) && (
+        isAdmin() ||
+        (isSignedInVerified() && (resource.data.target_uid == request.auth.uid || resource.data.target_role == 'ALL' || resource.data.target_role == 'ALUMNI'))
+      );
+      allow list: if isAdmin() || (
+        isSignedInVerified() && (resource.data.target_uid == request.auth.uid || resource.data.target_role == 'ALL' || resource.data.target_role == 'ALUMNI')
+      );
+      allow create: if isValidId(notifId) && isAdmin() && isValidNotification(incoming());
+      allow update: if isSignedInVerified() &&
+        isValidId(notifId) &&
+        isValidNotification(incoming()) &&
+        (isAdmin() || incoming().diff(existing()).affectedKeys().hasOnly(['is_read', 'read_by_uids']));
+      allow delete: if isValidId(notifId) && isAdmin();
+    }
+
+    // Audit Logs
+    match /audit_logs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedInVerified() &&
+        isValidId(logId) &&
+        isValidAuditLog(incoming()) &&
+        (isAdmin() || incoming().uid == request.auth.uid);
+      allow delete: if isValidId(logId) && isAdmin();
+    }
+
+    // School Settings (Public read for Landing Page, Admin-only write)
+    match /school_settings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if resource.data.name is string;
+      allow create, update: if isValidId(settingId) && isAdmin() && isValidSchoolSettings(incoming());
+      allow delete: if isValidId(settingId) && isAdmin();
+    }
+
+    // Guru BK Profiles (Admin CRUD for PDF publisher endorsement)
+    match /guru_bk_profiles/{bkId} {
+      allow get: if isValidId(bkId) && isAdmin();
+      allow list: if isAdmin();
+      allow create, update: if isValidId(bkId) && isAdmin() && isValidGuruBkProfile(incoming());
+      allow delete: if isValidId(bkId) && isAdmin();
+    }
+  }
+}

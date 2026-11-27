@@ -39,9 +39,18 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       loadNotifications();
     };
 
+    const handleFirestoreErr = (e: Event) => {
+      const detail = (e as CustomEvent<{ message?: string }>).detail;
+      if (detail?.message) {
+        showToast('error', detail.message, 'Sinkronisasi Database');
+      }
+    };
+
     window.addEventListener('alumnitrack_data_changed', handleDataChange);
+    window.addEventListener('alumnitrack_firestore_error', handleFirestoreErr);
     return () => {
       window.removeEventListener('alumnitrack_data_changed', handleDataChange);
+      window.removeEventListener('alumnitrack_firestore_error', handleFirestoreErr);
     };
   }, []);
 

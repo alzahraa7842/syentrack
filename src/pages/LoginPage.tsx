@@ -22,11 +22,13 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
-  const { login, register, isLoading } = useAuth();
+  const { login, register, bootstrapAdmin, needsAdminBootstrap, isLoading } = useAuth();
   const { showToast } = useNotification();
   const schoolSettings = StorageService.getSchoolSettings();
 
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [adminBootstrapPass, setAdminBootstrapPass] = useState('');
+  const [showBootstrapForm, setShowBootstrapForm] = useState(false);
 
   // Login form state
   const [identifier, setIdentifier] = useState('');
@@ -130,6 +132,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
     setAuthMode('register');
     setErrorMessage(null);
     setShowRegisterPrompt(false);
+  };
+
+  const handleBootstrapAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    if (adminBootstrapPass.length < 6) {
+      setErrorMessage('Password Admin minimal 6 karakter.');
+      return;
+    }
+    const res = await bootstrapAdmin(adminBootstrapPass);
+    if (!res.success) {
+      setErrorMessage(res.message);
+      showToast('error', res.message, 'Setup Admin');
+    } else {
+      showToast('success', res.message, 'Admin Aktif');
+      onNavigate('/admin/dashboard');
+    }
   };
 
   return (
@@ -245,6 +264,49 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
                     </button>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* First-run Admin Setup Card (only shown if ADMIN_PASSCODE unset and no admin password claimed yet) */}
+            {needsAdminBootstrap && (
+              <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-bold text-amber-900">
+                    <UserCheck className="w-4 h-4 text-amber-700" />
+                    <span>Aktivasi Password Admin Pertama Kali</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowBootstrapForm((v) => !v)}
+                    className="text-[11px] font-bold text-amber-800 hover:underline cursor-pointer"
+                  >
+                    {showBootstrapForm ? 'Tutup' : 'Atur Sekarang'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-amber-800/90 leading-relaxed">
+                  Belum ada password Admin yang ditetapkan. Tetapkan password awal untuk akun{' '}
+                  <span className="font-mono font-semibold">admin@sekolah.sch.id</span>.
+                </p>
+                {showBootstrapForm && (
+                  <form onSubmit={handleBootstrapAdmin} className="flex items-center gap-2 pt-1">
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={adminBootstrapPass}
+                      onChange={(e) => setAdminBootstrapPass(e.target.value)}
+                      placeholder="Buat password admin (min. 6 karakter)"
+                      className="flex-1 px-3 py-2 rounded-xl border border-amber-300 bg-white text-xs focus:outline-none focus:ring-1 focus:ring-amber-600"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-semibold text-xs shrink-0 cursor-pointer disabled:opacity-60"
+                    >
+                      Aktifkan
+                    </button>
+                  </form>
+                )}
               </div>
             )}
 

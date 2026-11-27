@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, 
   Plus, 
@@ -50,6 +50,11 @@ export const QuestionnaireBuilderPage: React.FC<QuestionnaireBuilderPageProps> =
   const reloadQuestions = () => {
     setQuestions(StorageService.getQuestions(surveyId));
   };
+
+  useEffect(() => {
+    window.addEventListener('alumnitrack_data_changed', reloadQuestions);
+    return () => window.removeEventListener('alumnitrack_data_changed', reloadQuestions);
+  }, [surveyId]);
 
   const handleOpenAddModal = () => {
     setEditingQuestion(null);

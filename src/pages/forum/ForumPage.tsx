@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   MessageSquare, 
   Plus, 
@@ -38,6 +38,11 @@ export const ForumPage: React.FC = () => {
   const reloadPosts = () => {
     setPosts(StorageService.getForumPosts());
   };
+
+  useEffect(() => {
+    window.addEventListener('alumnitrack_data_changed', reloadPosts);
+    return () => window.removeEventListener('alumnitrack_data_changed', reloadPosts);
+  }, []);
 
   const filteredPosts = posts.filter(p => {
     return selectedCategory === 'ALL' || p.category === selectedCategory;

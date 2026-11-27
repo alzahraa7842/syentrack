@@ -2,6 +2,7 @@ export type UserRole = 'ADMIN' | 'ALUMNI';
 
 export interface User {
   id: number;
+  uid?: string;
   name: string;
   email: string;
   nisn?: string;
@@ -9,6 +10,7 @@ export interface User {
   role: UserRole;
   avatar?: string;
   created_at?: string;
+  updated_at?: string;
   isActive: boolean;
   is_google_user?: boolean;
   receive_email_notifications?: boolean;
@@ -29,6 +31,7 @@ export type PrivacySetting = 'PUBLIC' | 'ADMIN_ONLY' | 'HIDDEN';
 export interface AlumniProfile {
   id: number;
   user_id: number;
+  uid?: string;
   name: string;
   nisn: string;
   angkatan: number; // Tahun Lulus, e.g. 2024, 2025
@@ -72,6 +75,7 @@ export interface AlumniProfile {
 export interface CareerHistoryItem {
   id: number;
   alumni_id: number;
+  uid?: string;
   year_start: number;
   year_end?: number; // empty if current
   is_current: boolean;
@@ -83,6 +87,7 @@ export interface CareerHistoryItem {
 export interface DocumentFile {
   id: number;
   alumni_id: number;
+  uid?: string;
   name: string;
   category: 'CV' | 'Portfolio' | 'Sertifikat' | 'Dokumen Lain';
   file_size_kb: number;
@@ -127,6 +132,7 @@ export interface TracerSubmission {
   id: number;
   survey_id: number;
   alumni_id: number;
+  uid?: string;
   alumni_name: string;
   angkatan: number;
   jurusan: string;
@@ -153,12 +159,14 @@ export interface JobPosting {
   image?: string; // Poster, brosur, atau foto informasi lowongan
   company_logo?: string;
   posted_by?: string;
+  author_uid?: string;
 }
 
 export interface ForumComment {
   id: number;
   post_id: number;
   author_id: number;
+  author_uid?: string;
   author_name: string;
   author_role: UserRole;
   author_avatar?: string;
@@ -169,6 +177,7 @@ export interface ForumComment {
 export interface ForumPost {
   id: number;
   author_id: number;
+  author_uid?: string;
   author_name: string;
   author_role: UserRole;
   author_avatar?: string;
@@ -177,6 +186,7 @@ export interface ForumPost {
   category: 'Karier' | 'Kuliah' | 'Networking' | 'Lowongan' | 'Umum';
   likes: number;
   liked_by_user: boolean;
+  liked_by_uids?: string[];
   is_locked: boolean;
   created_at: string;
   comments: ForumComment[];
@@ -185,17 +195,20 @@ export interface ForumPost {
 export interface NotificationItem {
   id: number;
   user_id?: number; // undefined means all or system
+  target_uid?: string;
   target_role?: UserRole | 'ALL';
   title: string;
   message: string;
   type: 'tracer' | 'profile' | 'job' | 'announcement' | 'forum';
   is_read: boolean;
+  read_by_uids?: string[];
   created_at: string;
   link?: string;
 }
 
 export interface AuditLog {
   id: number;
+  uid?: string;
   user_name: string;
   user_role: string;
   activity: string;

@@ -15,13 +15,12 @@ import {
   Radio,
   UserX
 } from 'lucide-react';
-import { StorageService } from '../services/storageService';
+import { StorageService, refreshPublicLandingData } from '../services/storageService';
+import { DEFAULT_HERO_IMAGE, resolveAssetUrl } from '../constants/assets';
 
 interface LandingPageProps {
   onNavigate: (path: string) => void;
 }
-
-const DEFAULT_HERO_IMAGE = '/src/assets/images/hero_alumni_careers_1790318409918.jpg';
 
 // Largest-remainder rounding so percentages always sum exactly to 100%
 function calculateExactPercentages(counts: number[], total: number): number[] {
@@ -40,38 +39,23 @@ function calculateExactPercentages(counts: number[], total: number): number[] {
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
   const [schoolSettings, setSchoolSettings] = useState(StorageService.getSchoolSettings());
-  const [alumniList, setAlumniList] = useState(StorageService.getAlumniList());
-  const [jobs, setJobs] = useState(StorageService.getJobs());
+  const [careerStats, setCareerStats] = useState(StorageService.getPublicCareerStats());
+  const [jobs, setJobs] = useState(StorageService.getJobs().filter(j => j.status === 'Published'));
   const [heroImgError, setHeroImgError] = useState(false);
 
-  // Real-time synchronization whenever data changes in the system
+  // Real-time synchronization whenever data changes locally or on backend
   useEffect(() => {
     const handleDataChange = () => {
       setSchoolSettings(StorageService.getSchoolSettings());
-      setAlumniList(StorageService.getAlumniList());
-      setJobs(StorageService.getJobs());
+      setCareerStats(StorageService.getPublicCareerStats());
+      setJobs(StorageService.getJobs().filter(j => j.status === 'Published'));
     };
 
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        handleDataChange();
-      }
-    };
-
+    handleDataChange();
+    void refreshPublicLandingData();
     window.addEventListener('alumnitrack_data_changed', handleDataChange);
-    window.addEventListener('storage', handleDataChange);
-    window.addEventListener('focus', handleDataChange);
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    // Lightweight periodic sync every 2s for seamless real-time reflection
-    const interval = window.setInterval(handleDataChange, 2000);
-
     return () => {
       window.removeEventListener('alumnitrack_data_changed', handleDataChange);
-      window.removeEventListener('storage', handleDataChange);
-      window.removeEventListener('focus', handleDataChange);
-      document.removeEventListener('visibilitychange', handleVisibility);
-      window.clearInterval(interval);
     };
   }, []);
 
@@ -80,10 +64,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
   }, [schoolSettings.landing_hero_image]);
 
   // Aggregate real-time public statistics that strictly sum to totalAlumni
-  const totalAlumni = alumniList.length;
-  const countBekerja = alumniList.filter(a => a.status_karir === 'Bekerja').length;
-  const countKuliah = alumniList.filter(a => a.status_karir === 'Kuliah').length;
-  const countWirausaha = alumniList.filter(a => a.status_karir === 'Wirausaha').length;
+  const totalAlumni = careerStats.length;
+  const countBekerja = careerStats.filter(a => a.status_karir === 'Bekerja').length;
+  const countKuliah = careerStats.filter(a => a.status_karir === 'Kuliah').length;
+  const countWirausaha = careerStats.filter(a => a.status_karir === 'Wirausaha').length;
   // Mencari Kerja, Tidak Bekerja, Lainnya -> Alumni Belum Bekerja
   const countBelumBekerja = totalAlumni - (countBekerja + countKuliah + countWirausaha);
 
@@ -185,7 +169,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
               <div className="relative rounded-2xl overflow-hidden shadow-2xl border border-slate-200 aspect-16/10 bg-slate-900">
                 {!heroImgError && (
                   <img
-                    src={schoolSettings.landing_hero_image || DEFAULT_HERO_IMAGE}
+                    src={resolveAssetUrl(schoolSettings.landing_hero_image, DEFAULT_HERO_IMAGE)}
                     alt="Alumni Prestasi Berkarir"
                     className="w-full h-full object-cover opacity-90"
                     onError={() => setHeroImgError(true)}

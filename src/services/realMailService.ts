@@ -1,3 +1,5 @@
+import { getAuthToken } from './storageService';
+
 export interface SmtpStatus {
   configured: boolean;
   enabled: boolean;
@@ -8,13 +10,19 @@ export interface SmtpStatus {
   fromEmail: string;
 }
 
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 export const RealMailService = {
-  /**
-   * Check if backend SMTP mailer is configured to send real emails to Gmail
-   */
   getStatus: async (): Promise<SmtpStatus | null> => {
     try {
-      const res = await fetch('/api/smtp/status');
+      const res = await fetch('/api/smtp/status', { headers: authHeaders() });
       if (!res.ok) return null;
       return await res.json();
     } catch (e) {
@@ -23,9 +31,6 @@ export const RealMailService = {
     }
   },
 
-  /**
-   * Save SMTP configuration (e.g. Gmail App Password)
-   */
   saveConfig: async (config: {
     host?: string;
     port?: number;
@@ -37,11 +42,11 @@ export const RealMailService = {
     try {
       const res = await fetch('/api/smtp/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           ...config,
-          enabled: true
-        })
+          enabled: true,
+        }),
       });
       return await res.json();
     } catch (e: any) {
@@ -49,9 +54,6 @@ export const RealMailService = {
     }
   },
 
-  /**
-   * Send a REAL email through backend SMTP to any user's real Gmail inbox
-   */
   sendRealEmail: async (params: {
     to: string;
     subject: string;
@@ -62,8 +64,8 @@ export const RealMailService = {
     try {
       const res = await fetch('/api/send-email', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params)
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(params),
       });
 
       const data = await res.json();
@@ -71,8 +73,8 @@ export const RealMailService = {
     } catch (e: any) {
       return {
         success: false,
-        error: e.message || 'Gagal menghubungi server pengirim email'
+        error: e.message || 'Gagal menghubungi server pengirim email',
       };
     }
-  }
+  },
 };

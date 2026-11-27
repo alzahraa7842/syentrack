@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Download, 
   FileSpreadsheet, 
@@ -19,6 +19,14 @@ interface ExportDataPageProps {
 
 export const ExportDataPage: React.FC<ExportDataPageProps> = ({ onNavigate }) => {
   const { showToast } = useNotification();
+  const [, setSyncTick] = useState(0);
+
+  useEffect(() => {
+    const sync = () => setSyncTick(t => t + 1);
+    window.addEventListener('alumnitrack_data_changed', sync);
+    return () => window.removeEventListener('alumnitrack_data_changed', sync);
+  }, []);
+
   const schoolSettings = StorageService.getSchoolSettings();
   const allAlumni = StorageService.getAlumniList();
 

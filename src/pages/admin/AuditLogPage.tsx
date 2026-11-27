@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, 
   Search, 
@@ -15,6 +15,12 @@ export const AuditLogPage: React.FC = () => {
   const [logs, setLogs] = useState(StorageService.getAuditLogs());
   const [searchQuery, setSearchQuery] = useState('');
   const [filterRole, setFilterRole] = useState('ALL');
+
+  useEffect(() => {
+    const sync = () => setLogs(StorageService.getAuditLogs());
+    window.addEventListener('alumnitrack_data_changed', sync);
+    return () => window.removeEventListener('alumnitrack_data_changed', sync);
+  }, []);
 
   const filteredLogs = logs.filter(log => {
     const matchSearch = log.user_name.toLowerCase().includes(searchQuery.toLowerCase()) ||

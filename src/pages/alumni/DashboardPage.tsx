@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   UserCheck, 
   GraduationCap, 
@@ -23,6 +23,14 @@ interface DashboardPageProps {
 
 export const AlumniDashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
   const { user, alumniProfile } = useAuth();
+  const [, setSyncTick] = useState(0);
+
+  useEffect(() => {
+    const sync = () => setSyncTick(t => t + 1);
+    window.addEventListener('alumnitrack_data_changed', sync);
+    return () => window.removeEventListener('alumnitrack_data_changed', sync);
+  }, []);
+
   const activeSurvey = StorageService.getActiveSurvey();
   const jobs = StorageService.getJobs();
 

@@ -28,11 +28,6 @@ import { Badge } from '../../components/common/Badge';
 import { Modal } from '../../components/common/Modal';
 import { EmailService } from '../../services/emailService';
 import { EmailNotificationLog } from '../../types';
-import { 
-  connectGoogleWorkspace, 
-  getGoogleAccessToken, 
-  sendRealGmailEmail 
-} from '../../services/googleAuthService';
 import { RealMailService, SmtpStatus } from '../../services/realMailService';
 
 interface NotificationsPageProps {
@@ -49,10 +44,6 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({ onNavigate
   // Gmail logs
   const [emailLogs, setEmailLogs] = useState<EmailNotificationLog[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<EmailNotificationLog | null>(null);
-
-  // Google Workspace API Connection State
-  const [isGoogleConnected, setIsGoogleConnected] = useState<boolean>(!!getGoogleAccessToken());
-  const [isConnecting, setIsConnecting] = useState(false);
   const [isSendingRealEmail, setIsSendingRealEmail] = useState(false);
 
   // SMTP Mailer State
@@ -70,7 +61,6 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({ onNavigate
   const reloadEmailLogs = () => {
     const logs = EmailService.getEmailLogs(user?.id, user?.email, user?.role === 'ADMIN');
     setEmailLogs(logs);
-    setIsGoogleConnected(!!getGoogleAccessToken());
   };
 
   const loadSmtpStatus = async () => {
@@ -111,21 +101,6 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({ onNavigate
       case 'job': return <Briefcase className="w-4 h-4 text-sky-700" />;
       case 'forum': return <MessageSquare className="w-4 h-4 text-amber-700" />;
       default: return <Sparkles className="w-4 h-4 text-emerald-700" />;
-    }
-  };
-
-  const handleConnectGoogle = async () => {
-    setIsConnecting(true);
-    try {
-      const res = await connectGoogleWorkspace();
-      setIsGoogleConnected(true);
-      showToast('success', `Akun Google (${res.user.email}) berhasil diotorisasi untuk pengiriman Gmail API!`);
-      reloadEmailLogs();
-    } catch (err: any) {
-      console.error(err);
-      showToast('error', err?.message || 'Gagal mengotorisasi Google Workspace');
-    } finally {
-      setIsConnecting(false);
     }
   };
 
@@ -185,27 +160,13 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({ onNavigate
       return;
     }
 
-    // 2. If requires configuration, prompt SMTP setup
     if (smtpRes.requiresConfig) {
-      // Check if Google Workspace token is active as backup
-      const token = getGoogleAccessToken();
-      if (token) {
-        const sendRes = await sendRealGmailEmail({
-          to: targetEmail,
-          subject: log.subject,
-          htmlBody: log.body_html
-        });
-
-        if (sendRes.success) {
-          showToast('success', `🎉 Email nyata berhasil terkirim via Gmail API ke kotak masuk: ${targetEmail}! Silakan cek aplikasi Gmail Anda.`);
-          setIsSendingRealEmail(false);
-          reloadEmailLogs();
-          return;
-        }
+      if (user?.role === 'ADMIN') {
+        showToast('info', 'Silakan atur akun pengirim Gmail (SMTP) di jendela pengaturan ini untuk mengirim email.');
+        setIsSmtpModalOpen(true);
+      } else {
+        showToast('info', 'Server SMTP sekolah belum dikonfigurasi oleh Admin.');
       }
-
-      showToast('info', 'Untuk membuat email fisik masuk ke aplikasi Gmail HP, silakan masukkan akun pengirim Gmail di jendela pengaturan ini.');
-      setIsSmtpModalOpen(true);
       setIsSendingRealEmail(false);
       reloadEmailLogs();
       return;
@@ -419,13 +380,15 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({ onNavigate
                   <span>Buka mail.google.com</span>
                 </a>
 
-                <button
-                  onClick={() => setIsSmtpModalOpen(true)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  <span>Atur Pengirim Gmail (SMTP)</span>
-                </button>
+                {user?.role === 'ADMIN' && (
+                  <button
+                    onClick={() => setIsSmtpModalOpen(true)}
+                    className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Atur Pengirim Gmail (SMTP)</span>
+                  </button>
+                )}
               </div>
             </div>
 

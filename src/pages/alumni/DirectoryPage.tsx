@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Compass, 
   Search, 
@@ -17,7 +17,13 @@ import { Badge } from '../../components/common/Badge';
 import { AVATAR_COWO } from '../../constants/avatars';
 
 export const AlumniDirectoryPage: React.FC = () => {
-  const allAlumni = StorageService.getAlumniList();
+  const [allAlumni, setAllAlumni] = useState<AlumniProfile[]>(StorageService.getAlumniList());
+
+  useEffect(() => {
+    const sync = () => setAllAlumni(StorageService.getAlumniList());
+    window.addEventListener('alumnitrack_data_changed', sync);
+    return () => window.removeEventListener('alumnitrack_data_changed', sync);
+  }, []);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterAngkatan, setFilterAngkatan] = useState('ALL');

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Briefcase, 
   Search, 
@@ -66,6 +66,11 @@ export const AlumniCareerCenterPage: React.FC = () => {
   const reloadJobs = () => {
     setJobs(StorageService.getJobs().filter(j => j.status === 'Published'));
   };
+
+  useEffect(() => {
+    window.addEventListener('alumnitrack_data_changed', reloadJobs);
+    return () => window.removeEventListener('alumnitrack_data_changed', reloadJobs);
+  }, []);
 
   const filteredJobs = jobs.filter(job => {
     const matchCat = selectedCategory === 'ALL' || job.category === selectedCategory;

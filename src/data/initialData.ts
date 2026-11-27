@@ -14,13 +14,14 @@ import {
   GuruBkProfile
 } from '../types';
 import { AVATAR_COWO, AVATAR_CEWE } from '../constants/avatars';
+import { DEFAULT_HERO_IMAGE, DEFAULT_SCHOOL_LOGO } from '../constants/assets';
 
 export const INITIAL_SCHOOL_SETTINGS: SchoolSettings = {
   name: "SMK Negeri 1 Prestasi Nusantara",
   tagline: "Pusat Keunggulan Vokasi & Rekap Karir Terpadu",
   npsn: "20108922",
-  logo: "/src/assets/images/school_crest_logo_1790318420474.jpg",
-  landing_hero_image: "/src/assets/images/hero_alumni_careers_1790318409918.jpg",
+  logo: DEFAULT_SCHOOL_LOGO,
+  landing_hero_image: DEFAULT_HERO_IMAGE,
   landing_hero_caption: "Mewujudkan Lulusan Siap Kerja, Berdaya Saing & Berakhlak Mulia",
   address: "Jl. Pendidikan Vokasi No. 45, Jakarta Selatan 12340",
   email: "info@smkn1prestasi.sch.id",

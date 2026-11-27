@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   CheckCircle2, 
   ArrowRight, 
@@ -27,6 +27,14 @@ interface TracerStudyWizardPageProps {
 export const TracerStudyWizardPage: React.FC<TracerStudyWizardPageProps> = ({ onNavigate }) => {
   const { user, alumniProfile } = useAuth();
   const { showToast } = useNotification();
+  const [, setSyncTick] = useState(0);
+
+  useEffect(() => {
+    const sync = () => setSyncTick(t => t + 1);
+    window.addEventListener('alumnitrack_data_changed', sync);
+    return () => window.removeEventListener('alumnitrack_data_changed', sync);
+  }, []);
+
   const activeSurvey = StorageService.getActiveSurvey();
   const currentAlumni: AlumniProfile = alumniProfile || 
     (user ? StorageService.getAlumniByUserId(user.id, user.email, user.nisn) : undefined) || 

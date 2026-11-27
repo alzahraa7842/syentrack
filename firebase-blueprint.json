@@ -1,0 +1,364 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Akun pengguna terautentikasi (Admin/Guru BK atau Alumni) yang terikat dengan Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number", "description": "ID numerik internal kompatibilitas UI" },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$", "description": "Firebase Auth UID pemilik akun" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "minLength": 3, "maxLength": 160 },
+        "nisn": { "type": "string", "maxLength": 30 },
+        "role": { "type": "string", "enum": ["ADMIN", "ALUMNI"] },
+        "avatar": { "type": "string", "maxLength": 250000 },
+        "isActive": { "type": "boolean" },
+        "is_google_user": { "type": "boolean" },
+        "receive_email_notifications": { "type": "boolean" },
+        "created_at": { "type": "string", "maxLength": 40 },
+        "updated_at": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "uid", "name", "email", "role", "isActive", "created_at"]
+    },
+    "AdminRegistry": {
+      "title": "AdminRegistry",
+      "description": "Daftar administrator (Guru BK) terotorisasi berdasarkan Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "name": { "type": "string", "maxLength": 120 },
+        "created_at": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["uid", "email", "name", "created_at"]
+    },
+    "AlumniProfile": {
+      "title": "AlumniProfile",
+      "description": "Profil lengkap alumni beserta status karir, tracer study, dan detail pekerjaan/kuliah/wirausaha.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "user_id": { "type": "number" },
+        "uid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "nisn": { "type": "string", "minLength": 1, "maxLength": 30 },
+        "angkatan": { "type": "number" },
+        "jurusan": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "domisili": { "type": "string", "maxLength": 120 },
+        "status_karir": { "type": "string", "enum": ["Bekerja", "Kuliah", "Wirausaha", "Mencari Kerja", "Tidak Bekerja", "Lainnya"] },
+        "status_tracer": { "type": "string", "enum": ["Sudah Mengisi", "Belum Mengisi", "Draft"] },
+        "privacy_setting": { "type": "string", "enum": ["PUBLIC", "ADMIN_ONLY", "HIDDEN"] },
+        "avatar": { "type": "string", "maxLength": 250000 },
+        "linkedin_url": { "type": "string", "maxLength": 250 },
+        "is_google_user": { "type": "boolean" },
+        "receive_email_notifications": { "type": "boolean" },
+        "job_company": { "type": "string", "maxLength": 160 },
+        "job_position": { "type": "string", "maxLength": 120 },
+        "job_industry": { "type": "string", "maxLength": 120 },
+        "job_location": { "type": "string", "maxLength": 120 },
+        "job_start_date": { "type": "string", "maxLength": 30 },
+        "job_type": { "type": "string", "enum": ["Full-time", "Part-time", "Freelance", "Kontrak"] },
+        "edu_university": { "type": "string", "maxLength": 160 },
+        "edu_major": { "type": "string", "maxLength": 120 },
+        "edu_degree": { "type": "string", "enum": ["D3", "D4", "S1", "S2"] },
+        "edu_location": { "type": "string", "maxLength": 120 },
+        "edu_start_year": { "type": "number" },
+        "biz_name": { "type": "string", "maxLength": 160 },
+        "biz_field": { "type": "string", "maxLength": 120 },
+        "biz_location": { "type": "string", "maxLength": 120 },
+        "biz_start_year": { "type": "number" },
+        "created_at": { "type": "string", "maxLength": 40 },
+        "updated_at": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "user_id", "name", "nisn", "angkatan", "jurusan", "email", "status_karir", "status_tracer", "privacy_setting", "created_at", "updated_at"]
+    },
+    "AlumniCareerStat": {
+      "title": "AlumniCareerStat",
+      "description": "Data statistik agregat non-PII untuk perhitungan real-time Landing Page publik.",
+      "type": "object",
+      "properties": {
+        "alumni_id": { "type": "number" },
+        "uid": { "type": "string", "maxLength": 128 },
+        "status_karir": { "type": "string", "enum": ["Bekerja", "Kuliah", "Wirausaha", "Mencari Kerja", "Tidak Bekerja", "Lainnya"] },
+        "angkatan": { "type": "number" },
+        "jurusan": { "type": "string", "maxLength": 80 },
+        "updated_at": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["alumni_id", "status_karir", "angkatan", "jurusan", "updated_at"]
+    },
+    "CareerHistoryItem": {
+      "title": "CareerHistoryItem",
+      "description": "Riwayat pekerjaan atau pendidikan alumni.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "alumni_id": { "type": "number" },
+        "uid": { "type": "string", "maxLength": 128 },
+        "year_start": { "type": "number" },
+        "year_end": { "type": "number" },
+        "is_current": { "type": "boolean" },
+        "position": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "company": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "alumni_id", "year_start", "is_current", "position", "company"]
+    },
+    "DocumentFile": {
+      "title": "DocumentFile",
+      "description": "Dokumen pendukung alumni (CV, Portfolio, Sertifikat).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "alumni_id": { "type": "number" },
+        "uid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "category": { "type": "string", "enum": ["CV", "Portfolio", "Sertifikat", "Dokumen Lain"] },
+        "file_size_kb": { "type": "number" },
+        "upload_date": { "type": "string", "maxLength": 40 },
+        "file_url": { "type": "string", "maxLength": 450000 },
+        "mime_type": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "alumni_id", "name", "category", "file_size_kb", "upload_date", "file_url", "mime_type"]
+    },
+    "TracerSurvey": {
+      "title": "TracerSurvey",
+      "description": "Periode survei Tracer Study resmi sekolah.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "target_angkatan": { "type": "number" },
+        "deadline": { "type": "string", "maxLength": 30 },
+        "status": { "type": "string", "enum": ["Aktif", "Nonaktif"] },
+        "total_target": { "type": "number" },
+        "created_at": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "title", "description", "target_angkatan", "deadline", "status", "total_target", "created_at"]
+    },
+    "TracerQuestion": {
+      "title": "TracerQuestion",
+      "description": "Butir pertanyaan kuesioner Tracer Study.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "survey_id": { "type": "number" },
+        "question_text": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "question_type": { "type": "string", "enum": ["text", "textarea", "radio", "checkbox", "dropdown", "rating", "number", "date"] },
+        "options": { "type": "array" },
+        "required": { "type": "boolean" },
+        "order": { "type": "number" },
+        "section": { "type": "string", "maxLength": 120 }
+      },
+      "required": ["id", "survey_id", "question_text", "question_type", "required", "order"]
+    },
+    "TracerSubmission": {
+      "title": "TracerSubmission",
+      "description": "Respon jawaban Tracer Study yang dikirim oleh alumni.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "survey_id": { "type": "number" },
+        "alumni_id": { "type": "number" },
+        "uid": { "type": "string", "maxLength": 128 },
+        "alumni_name": { "type": "string", "maxLength": 120 },
+        "angkatan": { "type": "number" },
+        "jurusan": { "type": "string", "maxLength": 80 },
+        "status": { "type": "string", "enum": ["Sudah Mengisi", "Draft"] },
+        "submitted_at": { "type": "string", "maxLength": 40 },
+        "answers": { "type": "object" }
+      },
+      "required": ["id", "survey_id", "alumni_id", "alumni_name", "angkatan", "jurusan", "status", "submitted_at", "answers"]
+    },
+    "JobPosting": {
+      "title": "JobPosting",
+      "description": "Informasi lowongan kerja, magang, beasiswa, event, dan pelatihan BKK.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "company": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "location": { "type": "string", "maxLength": 120 },
+        "type": { "type": "string", "enum": ["Full-time", "Part-time", "Internship", "Contract", "Remote"] },
+        "category": { "type": "string", "enum": ["Lowongan kerja", "Beasiswa", "Magang", "Event", "Pelatihan"] },
+        "deadline": { "type": "string", "maxLength": 30 },
+        "description": { "type": "string", "maxLength": 5000 },
+        "requirements": { "type": "string", "maxLength": 3000 },
+        "apply_url": { "type": "string", "maxLength": 500 },
+        "contact_email": { "type": "string", "maxLength": 160 },
+        "status": { "type": "string", "enum": ["Published", "Draft", "Archived"] },
+        "event_date": { "type": "string", "maxLength": 30 },
+        "created_at": { "type": "string", "maxLength": 40 },
+        "image": { "type": "string", "maxLength": 250000 },
+        "company_logo": { "type": "string", "maxLength": 250000 },
+        "posted_by": { "type": "string", "maxLength": 120 },
+        "author_uid": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "title", "company", "location", "type", "category", "deadline", "description", "status", "created_at"]
+    },
+    "ForumPost": {
+      "title": "ForumPost",
+      "description": "Postingan diskusi komunitas alumni dan BKK.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "author_id": { "type": "number" },
+        "author_uid": { "type": "string", "maxLength": 128 },
+        "author_name": { "type": "string", "maxLength": 120 },
+        "author_role": { "type": "string", "enum": ["ADMIN", "ALUMNI"] },
+        "author_avatar": { "type": "string", "maxLength": 250000 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "content": { "type": "string", "minLength": 1, "maxLength": 5000 },
+        "category": { "type": "string", "enum": ["Karier", "Kuliah", "Networking", "Lowongan", "Umum"] },
+        "likes": { "type": "number" },
+        "liked_by_user": { "type": "boolean" },
+        "liked_by_uids": { "type": "array" },
+        "is_locked": { "type": "boolean" },
+        "created_at": { "type": "string", "maxLength": 40 },
+        "comments": { "type": "array" }
+      },
+      "required": ["id", "author_id", "author_name", "author_role", "title", "content", "category", "likes", "is_locked", "created_at", "comments"]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "Notifikasi dan pengumuman sistem AlumniTrack.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "user_id": { "type": "number" },
+        "target_uid": { "type": "string", "maxLength": 128 },
+        "target_role": { "type": "string", "enum": ["ADMIN", "ALUMNI", "ALL"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "type": { "type": "string", "enum": ["tracer", "profile", "job", "announcement", "forum"] },
+        "is_read": { "type": "boolean" },
+        "read_by_uids": { "type": "array" },
+        "created_at": { "type": "string", "maxLength": 40 },
+        "link": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["id", "title", "message", "type", "is_read", "created_at"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Rekam jejak aktivitas pengguna dalam sistem.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "uid": { "type": "string", "maxLength": 128 },
+        "user_name": { "type": "string", "maxLength": 120 },
+        "user_role": { "type": "string", "maxLength": 40 },
+        "activity": { "type": "string", "maxLength": 500 },
+        "ip": { "type": "string", "maxLength": 80 },
+        "timestamp": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "user_name", "user_role", "activity", "ip", "timestamp"]
+    },
+    "SchoolSettings": {
+      "title": "SchoolSettings",
+      "description": "Konfigurasi profil sekolah, hero image Landing Page, dan jadwal pengingat tracer study.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 160 },
+        "tagline": { "type": "string", "maxLength": 250 },
+        "npsn": { "type": "string", "maxLength": 30 },
+        "logo": { "type": "string", "maxLength": 250000 },
+        "landing_hero_image": { "type": "string", "maxLength": 250000 },
+        "landing_hero_caption": { "type": "string", "maxLength": 250 },
+        "address": { "type": "string", "maxLength": 250 },
+        "email": { "type": "string", "maxLength": 160 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "academic_year": { "type": "string", "maxLength": 30 },
+        "website": { "type": "string", "maxLength": 200 },
+        "instagram": { "type": "string", "maxLength": 120 },
+        "linkedin": { "type": "string", "maxLength": 120 },
+        "tracer_default_deadline_days": { "type": "number" },
+        "reminder_7_days": { "type": "boolean" },
+        "reminder_3_days": { "type": "boolean" },
+        "reminder_1_day": { "type": "boolean" }
+      },
+      "required": ["name", "tagline", "npsn", "address", "email", "phone", "academic_year", "tracer_default_deadline_days", "reminder_7_days", "reminder_3_days", "reminder_1_day"]
+    },
+    "GuruBkProfile": {
+      "title": "GuruBkProfile",
+      "description": "Profil Guru BK penandatangan dan penerbit laporan resmi PDF.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "nip": { "type": "string", "maxLength": 50 },
+        "title": { "type": "string", "maxLength": 140 },
+        "email": { "type": "string", "maxLength": 160 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "city": { "type": "string", "maxLength": 80 },
+        "avatar": { "type": "string", "maxLength": 250000 },
+        "is_default": { "type": "boolean" },
+        "updated_at": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "name", "title", "updated_at"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Dokumen akun pengguna (PII terisolasi, hanya pemilik atau Admin yang dapat membaca)."
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminRegistry" },
+      "description": "Daftar UID administrator/Guru BK terotorisasi."
+    },
+    "/alumni_profiles/{alumniId}": {
+      "schema": { "$ref": "#/entities/AlumniProfile" },
+      "description": "Data induk profil alumni dan status karir."
+    },
+    "/alumni_career_stats/{alumniId}": {
+      "schema": { "$ref": "#/entities/AlumniCareerStat" },
+      "description": "Statistik non-PII untuk kalkulasi real-time statistik Landing Page publik."
+    },
+    "/career_histories/{historyId}": {
+      "schema": { "$ref": "#/entities/CareerHistoryItem" },
+      "description": "Riwayat pengalaman karir dan pendidikan alumni."
+    },
+    "/documents/{docId}": {
+      "schema": { "$ref": "#/entities/DocumentFile" },
+      "description": "Dokumen CV, portofolio, dan sertifikat milik alumni."
+    },
+    "/tracer_surveys/{surveyId}": {
+      "schema": { "$ref": "#/entities/TracerSurvey" },
+      "description": "Daftar periode survei Tracer Study."
+    },
+    "/tracer_questions/{questionId}": {
+      "schema": { "$ref": "#/entities/TracerQuestion" },
+      "description": "Pertanyaan kuesioner Tracer Study."
+    },
+    "/tracer_submissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/TracerSubmission" },
+      "description": "Jawaban kuesioner Tracer Study yang dikirim oleh alumni."
+    },
+    "/jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/JobPosting" },
+      "description": "Lowongan kerja, magang, beasiswa, dan event BKK."
+    },
+    "/forum_posts/{postId}": {
+      "schema": { "$ref": "#/entities/ForumPost" },
+      "description": "Diskusi forum alumni dan komentar."
+    },
+    "/notifications/{notifId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "Notifikasi dan broadcast pengumuman sekolah."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Catatan aktivitas audit keamanan sistem."
+    },
+    "/school_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/SchoolSettings" },
+      "description": "Pengaturan identitas sekolah dan gambar Landing Page."
+    },
+    "/guru_bk_profiles/{bkId}": {
+      "schema": { "$ref": "#/entities/GuruBkProfile" },
+      "description": "Profil Guru BK penerbit laporan resmi PDF."
+    }
+  }
+}

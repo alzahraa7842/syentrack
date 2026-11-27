@@ -1,6 +1,31 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, AlumniProfile } from '../types';
-import { StorageService } from '../services/storageService';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { User, AlumniProfile, UserRole } from '../types';
+import {
+  StorageService,
+  setAuthToken,
+  getAuthToken,
+  startAuthenticatedListeners,
+  stopAuthenticatedListeners,
+} from '../services/storageService';
+import { AVATAR_COWO } from '../constants/avatars';
+
+interface RegisterPayload {
+  name: string;
+  email: string;
+  nisn?: string;
+  angkatan?: number;
+  jurusan?: string;
+  phone?: string;
+  password: string;
+  avatar?: string;
+  receive_email_notifications?: boolean;
+}
+
+interface AuthResult {
+  success: boolean;
+  message: string;
+  role?: UserRole;
+}
 
 interface AuthContextType {
   user: User | null;
@@ -8,266 +33,298 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (identifier: string, password: string, rememberMe?: boolean) => Promise<{ success: boolean; message: string; role?: 'ADMIN' | 'ALUMNI' }>;
-  register: (data: {
-    name: string;
-    email: string;
-    nisn?: string;
-    angkatan?: number;
-    jurusan?: string;
-    phone?: string;
-    password: string;
-    avatar?: string;
-    receive_email_notifications?: boolean;
-  }) => Promise<{ success: boolean; message: string; role?: 'ADMIN' | 'ALUMNI' }>;
-  loginWithGoogle: (googleEmail: string, googleName: string, avatarUrl?: string) => Promise<{ success: boolean; message: string; role?: 'ADMIN' | 'ALUMNI' }>;
-  logout: () => void;
+  needsAdminBootstrap: boolean;
+  bootstrapAdmin: (password: string) => Promise<AuthResult>;
+  login: (identifier: string, password: string, rememberMe?: boolean) => Promise<AuthResult>;
+  register: (data: RegisterPayload) => Promise<AuthResult>;
+  logout: () => Promise<void>;
   refreshUser: () => void;
-  switchAccount: (role: 'ADMIN' | 'ALUMNI') => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [alumniProfile, setAlumniProfile] = useState<AlumniProfile | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [user, setUser] = useState<User | null>(() => StorageService.getCurrentUser());
+  const [alumniProfile, setAlumniProfile] = useState<AlumniProfile | null>(() => {
+    const initialUser = StorageService.getCurrentUser();
+    if (!initialUser || initialUser.role !== 'ALUMNI') return null;
+    return (
+      StorageService.getAlumniByUserId(initialUser.id, initialUser.email, initialUser.nisn) || null
+    );
+  });
+  const [token, setToken] = useState<string | null>(() => getAuthToken());
+  const [isLoading, setIsLoading] = useState<boolean>(() => !(getAuthToken() && StorageService.getCurrentUser()));
+  const [needsAdminBootstrap, setNeedsAdminBootstrap] = useState<boolean>(false);
 
-  const loadCurrentUserData = () => {
-    const savedUser = StorageService.getCurrentUser();
-    const savedToken = StorageService.getAuthToken();
-    if (savedUser && savedToken) {
-      setUser(savedUser);
-      setToken(savedToken);
-      if (savedUser.role === 'ALUMNI') {
-        const profile = StorageService.getAlumniByUserId(savedUser.id, savedUser.email, savedUser.nisn);
-        setAlumniProfile(profile || null);
-      } else {
-        setAlumniProfile(null);
+  const syncCachedProfile = useCallback((currentUser: User | null) => {
+    if (!currentUser) {
+      setAlumniProfile(null);
+      return;
+    }
+    if (currentUser.role === 'ALUMNI') {
+      const prof = StorageService.getAlumniByUserId(
+        currentUser.id,
+        currentUser.email,
+        currentUser.nisn
+      );
+      if (prof) {
+        setAlumniProfile(prof);
       }
     } else {
-      setUser(null);
       setAlumniProfile(null);
-      setToken(null);
     }
-    setIsLoading(false);
-  };
-
-  useEffect(() => {
-    loadCurrentUserData();
-
-    const handleAuthChange = () => {
-      loadCurrentUserData();
-    };
-
-    window.addEventListener('alumnitrack_auth_changed', handleAuthChange);
-    window.addEventListener('alumnitrack_data_changed', handleAuthChange);
-    window.addEventListener('storage', handleAuthChange);
-    return () => {
-      window.removeEventListener('alumnitrack_auth_changed', handleAuthChange);
-      window.removeEventListener('alumnitrack_data_changed', handleAuthChange);
-      window.removeEventListener('storage', handleAuthChange);
-    };
   }, []);
 
-  const login = async (identifier: string, password: string, _rememberMe: boolean = true) => {
-    setIsLoading(true);
-    await new Promise(res => setTimeout(res, 400));
+  useEffect(() => {
+    let active = true;
 
-    if (!identifier.trim()) {
-      setIsLoading(false);
-      return { success: false, message: 'Email atau NISN tidak boleh kosong' };
-    }
-    if (!password) {
-      setIsLoading(false);
-      return { success: false, message: 'Password tidak boleh kosong' };
-    }
+    const bootstrapSession = async () => {
+      const savedToken = getAuthToken();
+      const savedUser = StorageService.getCurrentUser();
 
-    const inputPass = password.trim();
-    let matchedUser = StorageService.findUserByEmailOrNISN(identifier);
+      if (savedToken && savedUser) {
+        startAuthenticatedListeners(savedUser.id, savedUser.role);
+        try {
+          const meRes = await fetch('/api/auth/me', {
+            headers: { Authorization: `Bearer ${savedToken}` },
+          });
+          if (meRes.ok && active) {
+            const meData = await meRes.json();
+            const cachedLocalProfile =
+              meData.user?.role === 'ALUMNI'
+                ? StorageService.getAlumniByUserId(
+                    meData.user.id,
+                    meData.user.email,
+                    meData.user.nisn
+                  )
+                : null;
+            const resolvedProfile =
+              meData.persistent === false && cachedLocalProfile
+                ? cachedLocalProfile
+                : meData.alumniProfile || cachedLocalProfile || null;
 
-    // If logging in with a brand-new personal email not yet in the system,
-    // strictly create a fresh, isolated account (never enter an existing account).
-    if (!matchedUser) {
-      const cleanEmail = identifier.trim().toLowerCase();
-      if (cleanEmail.includes('@') && cleanEmail.includes('.')) {
-        const autoName = cleanEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        const regRes = StorageService.registerAlumni({
-          name: autoName,
-          email: cleanEmail,
-          password: inputPass
-        });
-        if (regRes.success && regRes.user) {
-          matchedUser = regRes.user;
+            const resolvedUser: User = resolvedProfile
+              ? {
+                  ...meData.user,
+                  name: resolvedProfile.name || meData.user.name,
+                  avatar:
+                    resolvedProfile.avatar !== undefined
+                      ? resolvedProfile.avatar
+                      : meData.user.avatar,
+                }
+              : meData.user;
+
+            StorageService.setCurrentUser(resolvedUser);
+            setUser(resolvedUser);
+            setAlumniProfile(resolvedProfile);
+          } else if (meRes.status === 401 && active) {
+            const errData = await meRes.json().catch(() => ({}));
+            if (!errData?.ephemeralMiss) {
+              stopAuthenticatedListeners();
+              setUser(null);
+              setAlumniProfile(null);
+              setToken(null);
+            }
+          }
+        } catch {
+          // Offline / static hosting fallback: keep restored local session
         }
       }
+
+      try {
+        const res = await fetch('/api/auth/admin-status');
+        if (res.ok && active) {
+          const data = await res.json();
+          setNeedsAdminBootstrap(Boolean(data.needsBootstrap));
+        }
+      } catch (err) {
+        console.error('Admin status check error:', err);
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    };
+
+    void bootstrapSession();
+
+    const handleDataSync = () => {
+      const cachedUser = StorageService.getCurrentUser();
+      const cachedToken = getAuthToken();
+      setToken(cachedToken);
+      setUser(cachedUser);
+      syncCachedProfile(cachedUser);
+    };
+
+    window.addEventListener('alumnitrack_auth_changed', handleDataSync);
+    window.addEventListener('alumnitrack_data_changed', handleDataSync);
+    return () => {
+      active = false;
+      window.removeEventListener('alumnitrack_auth_changed', handleDataSync);
+      window.removeEventListener('alumnitrack_data_changed', handleDataSync);
+    };
+  }, [syncCachedProfile]);
+
+  const applyAuthenticatedSession = (
+    newToken: string,
+    authUser: User,
+    profile: AlumniProfile | null,
+    rememberMe = true
+  ) => {
+    setAuthToken(newToken, rememberMe);
+    let finalProfile = profile;
+    if (authUser.role === 'ALUMNI' && profile) {
+      const localCached = StorageService.getAlumniById(profile.id);
+      if (localCached && !StorageService.isServerPersistent()) {
+        finalProfile = localCached;
+      } else {
+        finalProfile = profile;
+      }
     }
 
-    if (!matchedUser) {
-      setIsLoading(false);
-      return { success: false, message: 'Akun tidak ditemukan. Periksa kembali Email atau NISN Anda.' };
-    }
+    const finalUser: User = finalProfile
+      ? {
+          ...authUser,
+          name: finalProfile.name || authUser.name,
+          avatar:
+            finalProfile.avatar !== undefined ? finalProfile.avatar : authUser.avatar,
+        }
+      : authUser;
 
-    if (!matchedUser.isActive) {
-      setIsLoading(false);
-      return { success: false, message: 'Akun Anda sedang dinonaktifkan. Hubungi Guru BK / Admin Sekolah.' };
-    }
-
-    // Verify passwords strictly
-    const isValidAdmin = matchedUser.role === 'ADMIN' && (
-      inputPass === 'Admin123!' ||
-      inputPass === 'admin' ||
-      (matchedUser.password && inputPass === matchedUser.password.trim())
-    );
-
-    const existingAlumniProfile = StorageService.getAlumniByUserId(
-      matchedUser.id,
-      matchedUser.email,
-      matchedUser.nisn
-    );
-    const storedPass = (matchedUser.password || existingAlumniProfile?.password || '').trim();
-
-    const isValidAlumni = matchedUser.role === 'ALUMNI' && (
-      storedPass
-        ? inputPass === storedPass
-        : (inputPass === 'Alumni123!' || Boolean(matchedUser.nisn && inputPass === matchedUser.nisn.trim()))
-    );
-
-    if (!isValidAdmin && !isValidAlumni) {
-      setIsLoading(false);
-      return { success: false, message: 'Password yang Anda masukkan salah' };
-    }
-
-    // Persist active password on the real users key if not yet stored
-    if (matchedUser.role === 'ALUMNI' && !matchedUser.password) {
-      matchedUser.password = inputPass;
-      StorageService.updateUserPassword(matchedUser.id, inputPass);
-    }
-
-    const dummyToken = `jwt_${matchedUser.role.toLowerCase()}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    StorageService.setCurrentUser(matchedUser, dummyToken);
-    StorageService.addAuditLog(matchedUser.name, matchedUser.role, `Login berhasil melalui browser`);
-
-    setUser(matchedUser);
-    setToken(dummyToken);
-
-    if (matchedUser.role === 'ALUMNI') {
-      const profile = StorageService.getAlumniByUserId(matchedUser.id, matchedUser.email, matchedUser.nisn);
-      setAlumniProfile(profile || null);
-    }
-
-    setIsLoading(false);
-    return { success: true, message: 'Login berhasil!', role: matchedUser.role };
+    StorageService.setCurrentUser(finalUser);
+    startAuthenticatedListeners(finalUser.id, finalUser.role);
+    setToken(newToken);
+    setUser(finalUser);
+    setAlumniProfile(finalProfile);
   };
 
-  const register = async (data: {
-    name: string;
-    email: string;
-    nisn?: string;
-    angkatan?: number;
-    jurusan?: string;
-    phone?: string;
-    password: string;
-    avatar?: string;
-    receive_email_notifications?: boolean;
-  }) => {
+  const bootstrapAdmin = async (password: string): Promise<AuthResult> => {
     setIsLoading(true);
-    await new Promise(res => setTimeout(res, 350));
-
-    const result = StorageService.registerAlumni(data);
-    if (!result.success || !result.user) {
-      setIsLoading(false);
-      return { success: false, message: result.message };
-    }
-
-    const dummyToken = `jwt_alumni_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    StorageService.setCurrentUser(result.user, dummyToken);
-    StorageService.addAuditLog(result.user.name, 'ALUMNI', 'Pendaftaran akun alumni baru menggunakan email pribadi');
-
-    setUser(result.user);
-    setToken(dummyToken);
-
-    const profile = StorageService.getAlumniByUserId(result.user.id, result.user.email, result.user.nisn);
-    setAlumniProfile(profile || null);
-
-    setIsLoading(false);
-    return { success: true, message: result.message, role: 'ALUMNI' as const };
-  };
-
-  const loginWithGoogle = async (googleEmail: string, googleName: string, avatarUrl?: string) => {
-    setIsLoading(true);
-    await new Promise(res => setTimeout(res, 350));
-    const cleanEmail = googleEmail.trim().toLowerCase();
-    let matchedUser = StorageService.findUserByEmailOrNISN(cleanEmail);
-
-    if (matchedUser && matchedUser.role === 'ADMIN') {
-      setIsLoading(false);
-      return { success: false, message: 'Akun Admin tidak dapat login menggunakan Google Sign-In.' };
-    }
-
-    if (!matchedUser) {
-      const reg = StorageService.registerAlumni({
-        name: googleName.trim() || cleanEmail.split('@')[0],
-        email: cleanEmail,
-        password: `GoogleAuth_${Date.now()}`,
-        avatar: avatarUrl || '',
-        receive_email_notifications: true
+    try {
+      const res = await fetch('/api/auth/bootstrap-admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
       });
-      if (!reg.success || !reg.user) {
+      const data = await res.json();
+      if (!res.ok || !data.success) {
         setIsLoading(false);
-        return { success: false, message: reg.message || 'Gagal mendaftarkan akun Google baru' };
+        return { success: false, message: data.message || 'Gagal menetapkan password Admin.' };
       }
-      matchedUser = reg.user;
-    }
 
-    if (matchedUser) {
-      if (!matchedUser.isActive) {
-        setIsLoading(false);
-        return { success: false, message: 'Akun Anda sedang dinonaktifkan. Hubungi Guru BK / Admin Sekolah.' };
-      }
-      matchedUser.is_google_user = true;
-      if (!matchedUser.avatar && avatarUrl) matchedUser.avatar = avatarUrl;
-      const dummyToken = `jwt_google_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-      StorageService.setCurrentUser(matchedUser, dummyToken);
-      StorageService.addAuditLog(matchedUser.name, 'ALUMNI', 'Login berhasil menggunakan Google Sign-In');
-      setUser(matchedUser);
-      setToken(dummyToken);
-      const profile = StorageService.getAlumniByUserId(matchedUser.id, matchedUser.email, matchedUser.nisn);
-      if (profile) {
-        profile.is_google_user = true;
-        if (!profile.avatar && avatarUrl) profile.avatar = avatarUrl;
-        setAlumniProfile(profile);
-      }
+      setNeedsAdminBootstrap(false);
+      applyAuthenticatedSession(data.token, data.user, null, true);
+      StorageService.addAuditLog(data.user.name, data.user.role, 'Menetapkan password Admin awal & masuk sistem');
       setIsLoading(false);
-      return { success: true, message: 'Berhasil masuk dengan Akun Google!', role: 'ALUMNI' as const };
+      return {
+        success: true,
+        message: data.message || 'Password Admin berhasil ditetapkan!',
+        role: data.user.role,
+      };
+    } catch {
+      setIsLoading(false);
+      return { success: false, message: 'Gagal menghubungi server.' };
     }
-    setIsLoading(false);
-    return { success: false, message: 'Gagal memproses akun Google' };
   };
 
-  const logout = () => {
+  const login = async (
+    identifier: string,
+    password: string,
+    rememberMe = true
+  ): Promise<AuthResult> => {
+    const cleanId = identifier.trim();
+    if (!cleanId) return { success: false, message: 'Email atau NISN tidak boleh kosong.' };
+    if (!password) return { success: false, message: 'Password tidak boleh kosong.' };
+
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: cleanId, password }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setIsLoading(false);
+        return { success: false, message: data.message || 'Gagal melakukan autentikasi.' };
+      }
+
+      applyAuthenticatedSession(
+        data.token,
+        data.user,
+        data.alumniProfile || null,
+        rememberMe
+      );
+      StorageService.addAuditLog(data.user.name, data.user.role, 'Login berhasil ke sistem');
+      setIsLoading(false);
+      return {
+        success: true,
+        message: data.message || 'Login berhasil!',
+        role: data.user.role,
+      };
+    } catch {
+      setIsLoading(false);
+      return { success: false, message: 'Gagal terhubung ke server autentikasi.' };
+    }
+  };
+
+  const register = async (payload: RegisterPayload): Promise<AuthResult> => {
+    const cleanEmail = (payload.email || '').trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, message: 'Alamat email valid wajib diisi.' };
+    }
+    if (!payload.password || payload.password.length < 6) {
+      return { success: false, message: 'Password minimal 6 karakter.' };
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payload,
+          email: cleanEmail,
+          avatar: payload.avatar !== undefined ? payload.avatar : AVATAR_COWO,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setIsLoading(false);
+        return { success: false, message: data.message || 'Gagal mendaftarkan akun baru.' };
+      }
+
+      applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null, true);
+      StorageService.addAuditLog(
+        data.user.name,
+        data.user.role,
+        'Mendaftar sebagai akun alumni baru'
+      );
+      setIsLoading(false);
+      return {
+        success: true,
+        message: data.message || 'Pendaftaran akun baru berhasil!',
+        role: data.user.role,
+      };
+    } catch {
+      setIsLoading(false);
+      return { success: false, message: 'Gagal terhubung ke server pendaftaran.' };
+    }
+  };
+
+  const logout = async () => {
     if (user) {
       StorageService.addAuditLog(user.name, user.role, 'Logout dari sistem');
     }
-    StorageService.setCurrentUser(null);
+    stopAuthenticatedListeners();
     setUser(null);
     setAlumniProfile(null);
     setToken(null);
   };
 
   const refreshUser = () => {
-    loadCurrentUserData();
-  };
-
-  // Helper for quick demonstration switching
-  const switchAccount = (role: 'ADMIN' | 'ALUMNI') => {
-    const users = StorageService.getUsers();
-    const targetUser = users.find(u => u.role === role);
-    if (targetUser) {
-      const dummyToken = `jwt_${targetUser.role.toLowerCase()}_${Date.now()}`;
-      StorageService.setCurrentUser(targetUser, dummyToken);
-      loadCurrentUserData();
+    const cachedUser = StorageService.getCurrentUser();
+    if (cachedUser) {
+      setUser(cachedUser);
+      syncCachedProfile(cachedUser);
     }
   };
 
@@ -279,12 +336,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         token,
         isAuthenticated: !!user && !!token,
         isLoading,
+        needsAdminBootstrap,
+        bootstrapAdmin,
         login,
         register,
-        loginWithGoogle,
         logout,
         refreshUser,
-        switchAccount
       }}
     >
       {children}
