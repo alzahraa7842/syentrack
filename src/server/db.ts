@@ -31,6 +31,11 @@ import {
   INITIAL_SCHOOL_SETTINGS,
   INITIAL_GURU_BK_PROFILES,
 } from '../data/initialData.ts';
+import {
+  DEFAULT_HERO_IMAGE,
+  DEFAULT_SCHOOL_LOGO,
+  resolveAssetUrl,
+} from '../constants/assets.ts';
 
 export interface StoredUser extends User {
   password_hash?: string;
@@ -68,7 +73,8 @@ function getPool(): Pool | null {
     global._neonPgPool = new Pool({
       connectionString: connStr,
       ssl: isLocal ? false : hasSslMode ? undefined : { rejectUnauthorized: true },
-      max: 10,
+      max: process.env.VERCEL ? 3 : 10,
+      idleTimeoutMillis: 15000,
       connectionTimeoutMillis: 15000,
     });
     global._neonPgPool.on('error', (err) => {
@@ -80,6 +86,10 @@ function getPool(): Pool | null {
 
 export function isNeonConfigured(): boolean {
   return Boolean(process.env.DATABASE_URL?.trim());
+}
+
+export function isEphemeralStore(): boolean {
+  return !isNeonConfigured() && Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 }
 
 function sanitizeInitialUsers(): StoredUser[] {
@@ -98,8 +108,43 @@ function sanitizeInitialProfiles(): AlumniProfile[] {
   });
 }
 
-function createInitialState(): DatabaseState {
+function normalizeSettingsRecord(raw?: Partial<SchoolSettings> | null): SchoolSettings {
+  const merged: SchoolSettings = {
+    ...INITIAL_SCHOOL_SETTINGS,
+    ...(raw || {}),
+  };
   return {
+    ...merged,
+    logo: resolveAssetUrl(merged.logo, DEFAULT_SCHOOL_LOGO),
+    landing_hero_image: resolveAssetUrl(merged.landing_hero_image, DEFAULT_HERO_IMAGE),
+  };
+}
+
+function normalizeStateAssets(state: DatabaseState): DatabaseState {
+  return {
+    ...state,
+    users: state.users.map((u) => ({
+      ...u,
+      avatar: u.avatar ? resolveAssetUrl(u.avatar) : '',
+    })),
+    profiles: state.profiles.map((p) => ({
+      ...p,
+      avatar: p.avatar ? resolveAssetUrl(p.avatar) : '',
+    })),
+    forum: state.forum.map((f) => ({
+      ...f,
+      author_avatar: f.author_avatar ? resolveAssetUrl(f.author_avatar) : undefined,
+    })),
+    guruBk: state.guruBk.map((g) => ({
+      ...g,
+      avatar: g.avatar ? resolveAssetUrl(g.avatar) : '',
+    })),
+    settings: normalizeSettingsRecord(state.settings),
+  };
+}
+
+function createInitialState(): DatabaseState {
+  return normalizeStateAssets({
     users: sanitizeInitialUsers(),
     profiles: sanitizeInitialProfiles(),
     histories: [...INITIAL_CAREER_HISTORIES],
@@ -114,7 +159,7 @@ function createInitialState(): DatabaseState {
     settings: { ...INITIAL_SCHOOL_SETTINGS },
     guruBk: [...INITIAL_GURU_BK_PROFILES],
     emailLogs: [],
-  };
+  });
 }
 
 let pgSchemaReady = false;
@@ -137,11 +182,11 @@ function readLocalState(): DatabaseState {
     if (fs.existsSync(LOCAL_DB_PATH)) {
       const raw = fs.readFileSync(LOCAL_DB_PATH, 'utf-8');
       const parsed = JSON.parse(raw) as Partial<DatabaseState>;
-      localStateCache = {
+      localStateCache = normalizeStateAssets({
         ...createInitialState(),
         ...parsed,
-        settings: parsed.settings || { ...INITIAL_SCHOOL_SETTINGS },
-      };
+        settings: normalizeSettingsRecord(parsed.settings),
+      });
       return localStateCache;
     }
   } catch (err) {
@@ -379,6 +424,70 @@ async function ensurePgInitialized(pool: Pool): Promise<void> {
         ['seeded_v1', new Date().toISOString()]
       );
     }
+
+    const cleanupCheck = await pool.query(`SELECT value FROM at_meta WHERE key = $1`, [
+      'cleanup_smoke_and_seed14_v1',
+    ]);
+    if (cleanupCheck.rows.length === 0) {
+      await pool.query(`UPDATE at_users SET password_hash = NULL WHERE id IN (1, 2)`);
+      await pool.query(
+        `DELETE FROM at_alumni_profiles WHERE user_id = 14 AND LOWER(email) = 'alzahraa7842@gmail.com'`
+      );
+      await pool.query(
+        `DELETE FROM at_users WHERE id = 14 AND LOWER(email) = 'alzahraa7842@gmail.com' AND password_hash IS NULL`
+      );
+      await pool.query(
+        `INSERT INTO at_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        ['cleanup_smoke_and_seed14_v1', new Date().toISOString()]
+      );
+    }
+
+    const adminResetCheck = await pool.query(`SELECT value FROM at_meta WHERE key = $1`, [
+      'reset_admin_bootstrap_v2',
+    ]);
+    if (adminResetCheck.rows.length === 0) {
+      await pool.query(`UPDATE at_users SET password_hash = NULL WHERE id = 1 AND role = 'ADMIN'`);
+      await pool.query(
+        `INSERT INTO at_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        ['reset_admin_bootstrap_v2', new Date().toISOString()]
+      );
+    }
+
+    const assetMigrationCheck = await pool.query(`SELECT value FROM at_meta WHERE key = $1`, [
+      'normalize_asset_urls_v1',
+    ]);
+    if (assetMigrationCheck.rows.length === 0) {
+      const settingsRow = await pool.query(`SELECT data FROM at_school_settings WHERE id = $1`, ['main']);
+      if (settingsRow.rows[0]?.data) {
+        const normalizedSettings = normalizeSettingsRecord(settingsRow.rows[0].data);
+        await pool.query(
+          `UPDATE at_school_settings SET data = $1 WHERE id = $2`,
+          [JSON.stringify(normalizedSettings), 'main']
+        );
+      }
+
+      await pool.query(
+        `UPDATE at_users SET avatar = '/images/' || SUBSTRING(avatar FROM LENGTH('/src/assets/images/') + 1)
+         WHERE avatar LIKE '/src/assets/images/%'`
+      );
+      await pool.query(
+        `UPDATE at_alumni_profiles SET avatar = '/images/' || SUBSTRING(avatar FROM LENGTH('/src/assets/images/') + 1)
+         WHERE avatar LIKE '/src/assets/images/%'`
+      );
+      await pool.query(
+        `UPDATE at_guru_bk_profiles SET avatar = '/images/' || SUBSTRING(avatar FROM LENGTH('/src/assets/images/') + 1)
+         WHERE avatar LIKE '/src/assets/images/%'`
+      );
+      await pool.query(
+        `UPDATE at_forum_posts SET author_avatar = '/images/' || SUBSTRING(author_avatar FROM LENGTH('/src/assets/images/') + 1)
+         WHERE author_avatar LIKE '/src/assets/images/%'`
+      );
+
+      await pool.query(
+        `INSERT INTO at_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        ['normalize_asset_urls_v1', new Date().toISOString()]
+      );
+    }
     pgSchemaReady = true;
   })();
 
@@ -582,7 +691,7 @@ async function readPgState(pool: Pool): Promise<DatabaseState> {
       nisn: r.nisn || undefined,
       password_hash: r.password_hash || undefined,
       role: r.role,
-      avatar: r.avatar || '',
+      avatar: resolveAssetUrl(r.avatar || ''),
       isActive: Boolean(r.is_active),
       is_google_user: Boolean(r.is_google_user),
       receive_email_notifications: r.receive_email_notifications ?? true,
@@ -601,7 +710,7 @@ async function readPgState(pool: Pool): Promise<DatabaseState> {
       domisili: r.domisili || 'Jakarta',
       status_karir: r.status_karir,
       status_tracer: r.status_tracer,
-      avatar: r.avatar || '',
+      avatar: resolveAssetUrl(r.avatar || ''),
       linkedin_url: r.linkedin_url || undefined,
       privacy_setting: r.privacy_setting,
       is_google_user: Boolean(r.is_google_user),
@@ -699,7 +808,7 @@ async function readPgState(pool: Pool): Promise<DatabaseState> {
       author_id: Number(r.author_id),
       author_name: r.author_name,
       author_role: r.author_role,
-      author_avatar: r.author_avatar || undefined,
+      author_avatar: r.author_avatar ? resolveAssetUrl(r.author_avatar) : undefined,
       title: r.title,
       content: r.content,
       category: r.category,
@@ -730,7 +839,7 @@ async function readPgState(pool: Pool): Promise<DatabaseState> {
       ip: r.ip,
       timestamp: r.timestamp,
     })),
-    settings: settingsRes.rows[0]?.data || { ...INITIAL_SCHOOL_SETTINGS },
+    settings: normalizeSettingsRecord(settingsRes.rows[0]?.data),
     guruBk:
       guruBkRes.rows.length > 0
         ? guruBkRes.rows.map((r) => ({
@@ -741,7 +850,7 @@ async function readPgState(pool: Pool): Promise<DatabaseState> {
             email: r.email || undefined,
             phone: r.phone || undefined,
             city: r.city || undefined,
-            avatar: r.avatar || '',
+            avatar: resolveAssetUrl(r.avatar || ''),
             is_default: Boolean(r.is_default),
             updated_at: r.updated_at,
           }))
@@ -876,6 +985,25 @@ export const pgOps = {
         p.biz_name || null, p.biz_field || null, p.biz_location || null,
         p.biz_start_year ?? null, p.created_at, p.updated_at,
       ]
+    );
+  },
+
+  async getMeta(key: string): Promise<string | null> {
+    const pool = getPool();
+    if (!pool) return null;
+    await ensurePgInitialized(pool);
+    const res = await pool.query('SELECT value FROM at_meta WHERE key = $1', [key]);
+    return res.rows[0]?.value ?? null;
+  },
+
+  async setMeta(key: string, value: string): Promise<void> {
+    const pool = getPool();
+    if (!pool) return;
+    await ensurePgInitialized(pool);
+    await pool.query(
+      `INSERT INTO at_meta (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [key, value]
     );
   },
 };

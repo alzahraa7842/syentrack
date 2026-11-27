@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { User, AlumniProfile, UserRole } from '../types';
 import {
   StorageService,
+  getAuthToken,
   setAuthToken,
   startAuthenticatedListeners,
   stopAuthenticatedListeners,
@@ -24,6 +25,7 @@ interface AuthResult {
   success: boolean;
   message: string;
   role?: UserRole;
+  code?: string;
 }
 
 interface AuthContextType {
@@ -32,8 +34,10 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isSubmitting: boolean;
   needsAdminBootstrap: boolean;
   bootstrapAdmin: (password: string) => Promise<AuthResult>;
+  activateAlumni: (identifier: string, password: string) => Promise<AuthResult>;
   login: (identifier: string, password: string, rememberMe?: boolean) => Promise<AuthResult>;
   register: (data: RegisterPayload) => Promise<AuthResult>;
   logout: () => Promise<void>;
@@ -47,6 +51,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [alumniProfile, setAlumniProfile] = useState<AlumniProfile | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [needsAdminBootstrap, setNeedsAdminBootstrap] = useState<boolean>(false);
 
   const syncCachedProfile = useCallback((currentUser: User | null) => {
@@ -70,26 +75,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let active = true;
-    const checkInitialStatus = async () => {
+    const initAuth = async () => {
       try {
-        const res = await fetch('/api/auth/admin-status');
-        if (res.ok && active) {
-          const data = await res.json();
-          setNeedsAdminBootstrap(Boolean(data.needsBootstrap));
+        const storedToken = getAuthToken();
+        const cachedUser = StorageService.getCurrentUser();
+        if (storedToken && cachedUser && active) {
+          setToken(storedToken);
+          setUser(cachedUser);
+          syncCachedProfile(cachedUser);
+        }
+
+        const statusPromise = fetch('/api/auth/admin-status')
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null);
+
+        const mePromise = storedToken
+          ? fetch('/api/auth/me', {
+              headers: { Authorization: `Bearer ${storedToken}` },
+            }).catch(() => null)
+          : Promise.resolve(null);
+
+        const [statusData, meRes] = await Promise.all([statusPromise, mePromise]);
+
+        if (statusData && active) {
+          setNeedsAdminBootstrap(Boolean(statusData.needsBootstrap));
+        }
+
+        if (storedToken && meRes && active) {
+          if (meRes.ok) {
+            const meData = await meRes.json();
+            if (meData?.user && active) {
+              StorageService.syncSessionFromServer(meData.user, meData.alumniProfile || null);
+              startAuthenticatedListeners(meData.user.id, meData.user.role);
+              setToken(storedToken);
+              setUser(meData.user);
+              setAlumniProfile(meData.alumniProfile || null);
+            }
+          } else if (meRes.status === 401 || meRes.status === 403) {
+            stopAuthenticatedListeners();
+            setToken(null);
+            setUser(null);
+            setAlumniProfile(null);
+          }
         }
       } catch (err) {
-        console.error('Admin status check error:', err);
+        console.error('Initial auth check error:', err);
       } finally {
         if (active) setIsLoading(false);
       }
     };
-    void checkInitialStatus();
+    void initAuth();
 
     const handleDataSync = () => {
+      const activeToken = getAuthToken();
       const cachedUser = StorageService.getCurrentUser();
-      if (cachedUser) {
+      if (activeToken && cachedUser) {
+        setToken(activeToken);
         setUser(cachedUser);
         syncCachedProfile(cachedUser);
+      } else if (!activeToken) {
+        setToken(null);
+        setUser(null);
+        setAlumniProfile(null);
       }
     };
 
@@ -105,10 +152,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const applyAuthenticatedSession = (
     newToken: string,
     authUser: User,
-    profile: AlumniProfile | null
+    profile: AlumniProfile | null,
+    rememberMe = true
   ) => {
-    setAuthToken(newToken);
-    StorageService.setCurrentUser(authUser);
+    setAuthToken(newToken, rememberMe);
+    StorageService.syncSessionFromServer(authUser, profile);
     startAuthenticatedListeners(authUser.id, authUser.role);
     setToken(newToken);
     setUser(authUser);
@@ -116,7 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const bootstrapAdmin = async (password: string): Promise<AuthResult> => {
-    setIsLoading(true);
+    setIsSubmitting(true);
     try {
       const res = await fetch('/api/auth/bootstrap-admin', {
         method: 'POST',
@@ -125,31 +173,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setIsLoading(false);
+        setIsSubmitting(false);
         return { success: false, message: data.message || 'Gagal menetapkan password Admin.' };
       }
 
       setNeedsAdminBootstrap(false);
       applyAuthenticatedSession(data.token, data.user, null);
       StorageService.addAuditLog(data.user.name, data.user.role, 'Menetapkan password Admin awal & masuk sistem');
-      setIsLoading(false);
+      setIsSubmitting(false);
       return {
         success: true,
         message: data.message || 'Password Admin berhasil ditetapkan!',
         role: data.user.role,
       };
     } catch {
-      setIsLoading(false);
+      setIsSubmitting(false);
       return { success: false, message: 'Gagal menghubungi server.' };
     }
   };
 
-  const login = async (identifier: string, password: string): Promise<AuthResult> => {
+  const activateAlumni = async (identifier: string, password: string): Promise<AuthResult> => {
+    setIsSubmitting(true);
+    try {
+      const res = await fetch('/api/auth/activate-alumni', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: identifier.trim(), password }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setIsSubmitting(false);
+        return { success: false, message: data.message || 'Gagal mengaktivasi akun alumni.' };
+      }
+
+      applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null);
+      StorageService.addAuditLog(data.user.name, data.user.role, 'Aktivasi password awal & login alumni');
+      setIsSubmitting(false);
+      return {
+        success: true,
+        message: data.message || 'Akun berhasil diaktivasi!',
+        role: data.user.role,
+      };
+    } catch {
+      setIsSubmitting(false);
+      return { success: false, message: 'Gagal terhubung ke server aktivasi.' };
+    }
+  };
+
+  const login = async (identifier: string, password: string, rememberMe = true): Promise<AuthResult> => {
     const cleanId = identifier.trim();
     if (!cleanId) return { success: false, message: 'Email atau NISN tidak boleh kosong.' };
     if (!password) return { success: false, message: 'Password tidak boleh kosong.' };
 
-    setIsLoading(true);
+    setIsSubmitting(true);
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
@@ -158,20 +234,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setIsLoading(false);
-        return { success: false, message: data.message || 'Gagal melakukan autentikasi.' };
+        setIsSubmitting(false);
+        return {
+          success: false,
+          code: data.code,
+          message: data.message || 'Gagal melakukan autentikasi.',
+        };
       }
 
-      applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null);
+      applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null, rememberMe);
       StorageService.addAuditLog(data.user.name, data.user.role, 'Login berhasil ke sistem');
-      setIsLoading(false);
+      setIsSubmitting(false);
       return {
         success: true,
         message: data.message || 'Login berhasil!',
         role: data.user.role,
       };
     } catch {
-      setIsLoading(false);
+      setIsSubmitting(false);
       return { success: false, message: 'Gagal terhubung ke server autentikasi.' };
     }
   };
@@ -185,7 +265,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Password minimal 6 karakter.' };
     }
 
-    setIsLoading(true);
+    setIsSubmitting(true);
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -198,8 +278,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setIsLoading(false);
-        return { success: false, message: data.message || 'Gagal mendaftarkan akun baru.' };
+        setIsSubmitting(false);
+        return {
+          success: false,
+          code: data.code,
+          message: data.message || 'Gagal mendaftarkan akun baru.',
+        };
       }
 
       applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null);
@@ -208,14 +292,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         data.user.role,
         'Mendaftar sebagai akun alumni baru'
       );
-      setIsLoading(false);
+      setIsSubmitting(false);
       return {
         success: true,
         message: data.message || 'Pendaftaran akun baru berhasil!',
         role: data.user.role,
       };
     } catch {
-      setIsLoading(false);
+      setIsSubmitting(false);
       return { success: false, message: 'Gagal terhubung ke server pendaftaran.' };
     }
   };
@@ -246,8 +330,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         token,
         isAuthenticated: !!user && !!token,
         isLoading,
+        isSubmitting,
         needsAdminBootstrap,
         bootstrapAdmin,
+        activateAlumni,
         login,
         register,
         logout,

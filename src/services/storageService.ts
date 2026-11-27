@@ -23,6 +23,7 @@ import {
   INITIAL_SCHOOL_SETTINGS,
   INITIAL_GURU_BK_PROFILES,
 } from '../data/initialData';
+import { DEFAULT_HERO_IMAGE, DEFAULT_SCHOOL_LOGO, resolveAssetUrl } from '../constants/assets';
 
 export interface PublicCareerStat {
   alumni_id: number;
@@ -31,6 +32,97 @@ export interface PublicCareerStat {
   angkatan: number;
   jurusan: string;
   updated_at: string;
+}
+
+const LS_KEYS = {
+  TOKEN: 'alumnitrack_auth_token',
+  CURRENT_USER: 'alumnitrack_current_user',
+  USERS: 'alumnitrack_users',
+  PROFILES: 'alumnitrack_alumni_profiles',
+  PROFILE_EDITS: 'alumnitrack_profile_local_edits',
+  CAREER_STATS: 'alumnitrack_public_career_stats',
+  HISTORIES: 'alumnitrack_histories',
+  DOCUMENTS: 'alumnitrack_documents',
+  SURVEYS: 'alumnitrack_surveys',
+  QUESTIONS: 'alumnitrack_questions',
+  SUBMISSIONS: 'alumnitrack_submissions',
+  JOBS: 'alumnitrack_jobs',
+  PUBLIC_JOBS: 'alumnitrack_public_jobs',
+  FORUM: 'alumnitrack_forum',
+  NOTIFICATIONS: 'alumnitrack_notifications',
+  AUDIT: 'alumnitrack_audit',
+  SETTINGS: 'alumnitrack_school_settings',
+  SETTINGS_META: 'alumnitrack_school_settings_meta',
+  GURU_BK: 'alumnitrack_guru_bk',
+  EMAIL_LOGS: 'alumnitrack_email_logs',
+} as const;
+
+interface SettingsMeta {
+  updatedAt: number;
+  customized: boolean;
+  syncedToServer: boolean;
+}
+
+interface ProfileLocalEdit {
+  profile: AlumniProfile;
+  updatedAt: number;
+  syncedToServer: boolean;
+}
+
+function safeReadJson<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function safeWriteJson(key: string, value: unknown): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    console.warn(`LocalStorage write failed for ${key}:`, err);
+  }
+}
+
+function safeRemoveKey(key: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(key);
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+function normalizeSettings(raw?: Partial<SchoolSettings> | null): SchoolSettings {
+  const merged: SchoolSettings = {
+    ...INITIAL_SCHOOL_SETTINGS,
+    ...(raw || {}),
+  };
+  return {
+    ...merged,
+    logo: resolveAssetUrl(merged.logo, DEFAULT_SCHOOL_LOGO),
+    landing_hero_image: resolveAssetUrl(merged.landing_hero_image, DEFAULT_HERO_IMAGE),
+  };
+}
+
+function normalizeProfile(profile: AlumniProfile): AlumniProfile {
+  return {
+    ...profile,
+    avatar: profile.avatar !== undefined ? resolveAssetUrl(profile.avatar) : profile.avatar,
+  };
+}
+
+function normalizeUser(user: User): User {
+  return {
+    ...user,
+    avatar: user.avatar !== undefined ? resolveAssetUrl(user.avatar) : user.avatar,
+  };
 }
 
 function emitDataChanged() {
@@ -53,13 +145,63 @@ function emitSyncErrorToast(message: string) {
   }
 }
 
-let inMemoryAuthToken: string | null = null;
+let broadcastChannel: BroadcastChannel | null = null;
+if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
+  try {
+    broadcastChannel = new BroadcastChannel('alumnitrack_sync');
+  } catch {
+    broadcastChannel = null;
+  }
+}
 
-export function setAuthToken(token: string | null): void {
+function notifyOtherTabs(scope: string) {
+  try {
+    broadcastChannel?.postMessage({ scope, ts: Date.now() });
+  } catch {
+    // ignore
+  }
+}
+
+function readStoredToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return (
+      window.localStorage.getItem(LS_KEYS.TOKEN) ||
+      window.sessionStorage.getItem(LS_KEYS.TOKEN) ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+let inMemoryAuthToken: string | null = readStoredToken();
+
+export function setAuthToken(token: string | null, rememberMe = true): void {
   inMemoryAuthToken = token;
+  if (typeof window === 'undefined') return;
+  try {
+    if (token) {
+      if (rememberMe) {
+        window.localStorage.setItem(LS_KEYS.TOKEN, token);
+        window.sessionStorage.removeItem(LS_KEYS.TOKEN);
+      } else {
+        window.sessionStorage.setItem(LS_KEYS.TOKEN, token);
+        window.localStorage.removeItem(LS_KEYS.TOKEN);
+      }
+    } else {
+      window.localStorage.removeItem(LS_KEYS.TOKEN);
+      window.sessionStorage.removeItem(LS_KEYS.TOKEN);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 export function getAuthToken(): string | null {
+  if (!inMemoryAuthToken) {
+    inMemoryAuthToken = readStoredToken();
+  }
   return inMemoryAuthToken;
 }
 
@@ -85,45 +227,202 @@ interface StoreCache {
   hasPublicJobs: boolean;
 }
 
-const cache: StoreCache = {
-  users: [],
-  currentUser: null,
-  profiles: [],
-  careerStats: [],
-  histories: [],
-  documents: [],
-  surveys: [],
-  questions: [],
-  submissions: [],
-  jobs: [],
-  publicJobs: [],
-  forum: [],
-  notifications: [],
-  audit: [],
-  settings: { ...INITIAL_SCHOOL_SETTINGS },
-  guruBk: [...INITIAL_GURU_BK_PROFILES],
-  emailLogs: [],
-  hasPublicStats: false,
-  hasPublicJobs: false,
-};
+function loadInitialCache(): StoreCache {
+  const storedSettings = safeReadJson<SchoolSettings | null>(LS_KEYS.SETTINGS, null);
+  const storedProfiles = safeReadJson<AlumniProfile[]>(LS_KEYS.PROFILES, []).map(normalizeProfile);
+  const storedCareerStats = safeReadJson<PublicCareerStat[]>(LS_KEYS.CAREER_STATS, []);
+  const storedPublicJobs = safeReadJson<JobPosting[]>(LS_KEYS.PUBLIC_JOBS, []);
+  const storedCurrentUser = safeReadJson<User | null>(LS_KEYS.CURRENT_USER, null);
+
+  return {
+    users: safeReadJson<User[]>(LS_KEYS.USERS, []).map(normalizeUser),
+    currentUser: storedCurrentUser ? normalizeUser(storedCurrentUser) : null,
+    profiles: storedProfiles,
+    careerStats: storedCareerStats,
+    histories: safeReadJson<CareerHistoryItem[]>(LS_KEYS.HISTORIES, []),
+    documents: safeReadJson<DocumentFile[]>(LS_KEYS.DOCUMENTS, []),
+    surveys: safeReadJson<TracerSurvey[]>(LS_KEYS.SURVEYS, []),
+    questions: safeReadJson<TracerQuestion[]>(LS_KEYS.QUESTIONS, []),
+    submissions: safeReadJson<TracerSubmission[]>(LS_KEYS.SUBMISSIONS, []),
+    jobs: safeReadJson<JobPosting[]>(LS_KEYS.JOBS, []),
+    publicJobs: storedPublicJobs,
+    forum: safeReadJson<ForumPost[]>(LS_KEYS.FORUM, []),
+    notifications: safeReadJson<NotificationItem[]>(LS_KEYS.NOTIFICATIONS, []),
+    audit: safeReadJson<AuditLog[]>(LS_KEYS.AUDIT, []),
+    settings: normalizeSettings(storedSettings),
+    guruBk: safeReadJson<GuruBkProfile[]>(LS_KEYS.GURU_BK, [...INITIAL_GURU_BK_PROFILES]),
+    emailLogs: safeReadJson<EmailNotificationLog[]>(LS_KEYS.EMAIL_LOGS, []),
+    hasPublicStats: storedCareerStats.length > 0,
+    hasPublicJobs: storedPublicJobs.length > 0,
+  };
+}
+
+const cache: StoreCache = loadInitialCache();
 
 let sseSource: EventSource | null = null;
 let publicStarted = false;
 let authActive = false;
+let serverIsPersistent = true;
+let serverEngineName = 'neon-pg';
+
+function getSettingsMeta(): SettingsMeta {
+  return safeReadJson<SettingsMeta>(LS_KEYS.SETTINGS_META, {
+    updatedAt: 0,
+    customized: false,
+    syncedToServer: true,
+  });
+}
+
+function setSettingsMeta(meta: SettingsMeta): void {
+  safeWriteJson(LS_KEYS.SETTINGS_META, meta);
+}
+
+function getProfileEdits(): Record<string, ProfileLocalEdit> {
+  return safeReadJson<Record<string, ProfileLocalEdit>>(LS_KEYS.PROFILE_EDITS, {});
+}
+
+function setProfileEdits(edits: Record<string, ProfileLocalEdit>): void {
+  safeWriteJson(LS_KEYS.PROFILE_EDITS, edits);
+}
+
+function mergeServerProfilesWithLocalEdits(serverProfiles: AlumniProfile[], persistent: boolean): AlumniProfile[] {
+  const edits = getProfileEdits();
+  const normalizedServer = serverProfiles.map(normalizeProfile);
+  const now = Date.now();
+  const serverIds = new Set(normalizedServer.map((p) => p.id));
+  let editsChanged = false;
+
+  const merged = normalizedServer.map((srv) => {
+    const localEdit = edits[String(srv.id)];
+    if (!localEdit) return srv;
+    const isFresh = now - localEdit.updatedAt < 1500;
+    if (!persistent || !localEdit.syncedToServer || isFresh) {
+      return normalizeProfile({ ...srv, ...localEdit.profile });
+    }
+    delete edits[String(srv.id)];
+    editsChanged = true;
+    return srv;
+  });
+
+  // Preserve locally-created profiles that haven't been persisted yet
+  for (const [key, edit] of Object.entries(edits)) {
+    if (!serverIds.has(edit.profile.id)) {
+      if (!persistent || !edit.syncedToServer) {
+        merged.unshift(normalizeProfile(edit.profile));
+      } else {
+        delete edits[key];
+        editsChanged = true;
+      }
+    }
+  }
+
+  if (editsChanged) {
+    setProfileEdits(edits);
+  }
+
+  return merged;
+}
+
+function shouldAcceptServerSettings(serverSettings: SchoolSettings, persistent: boolean): boolean {
+  if (!serverSettings) return false;
+  const meta = getSettingsMeta();
+  const now = Date.now();
+  const isFresh = now - meta.updatedAt < 1500;
+
+  if (isFresh) return false;
+  if (!persistent && meta.customized) return false;
+  if (meta.customized && !meta.syncedToServer) {
+    return false;
+  }
+  return true;
+}
+
+function hydrateFromStorage(): void {
+  const fresh = loadInitialCache();
+  cache.users = fresh.users;
+  cache.currentUser = fresh.currentUser;
+  cache.profiles = fresh.profiles;
+  cache.careerStats = fresh.careerStats;
+  cache.histories = fresh.histories;
+  cache.documents = fresh.documents;
+  cache.surveys = fresh.surveys;
+  cache.questions = fresh.questions;
+  cache.submissions = fresh.submissions;
+  cache.jobs = fresh.jobs;
+  cache.publicJobs = fresh.publicJobs;
+  cache.forum = fresh.forum;
+  cache.notifications = fresh.notifications;
+  cache.audit = fresh.audit;
+  cache.settings = fresh.settings;
+  cache.guruBk = fresh.guruBk;
+  cache.emailLogs = fresh.emailLogs;
+  cache.hasPublicStats = fresh.hasPublicStats;
+  cache.hasPublicJobs = fresh.hasPublicJobs;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key && e.key.startsWith('alumnitrack_')) {
+      hydrateFromStorage();
+      emitAuthChanged();
+      emitDataChanged();
+    }
+  });
+  broadcastChannel?.addEventListener('message', () => {
+    hydrateFromStorage();
+    emitAuthChanged();
+    emitDataChanged();
+  });
+}
 
 export async function refreshPublicLandingData(): Promise<void> {
   try {
     const res = await fetch('/api/public/landing');
     if (!res.ok) return;
     const data = await res.json();
-    if (data.settings) cache.settings = data.settings;
-    if (Array.isArray(data.publicCareerStats)) {
-      cache.careerStats = data.publicCareerStats;
-      cache.hasPublicStats = true;
+    const persistent = data.persistent !== false;
+    serverIsPersistent = persistent;
+    if (typeof data.engine === 'string') serverEngineName = data.engine;
+
+    if (data.settings && shouldAcceptServerSettings(data.settings, persistent)) {
+      const normalized = normalizeSettings(data.settings);
+      cache.settings = normalized;
+      safeWriteJson(LS_KEYS.SETTINGS, normalized);
+      if (persistent) {
+        setSettingsMeta({
+          updatedAt: getSettingsMeta().updatedAt,
+          customized: false,
+          syncedToServer: true,
+        });
+      }
     }
+
+    if (Array.isArray(data.publicCareerStats)) {
+      const edits = getProfileEdits();
+      const serverStats = data.publicCareerStats as PublicCareerStat[];
+      if (!persistent && Object.keys(edits).length > 0) {
+        const statMap = new Map(serverStats.map((s) => [s.alumni_id, s]));
+        for (const edit of Object.values(edits)) {
+          statMap.set(edit.profile.id, {
+            alumni_id: edit.profile.id,
+            status_karir: edit.profile.status_karir,
+            angkatan: edit.profile.angkatan,
+            jurusan: edit.profile.jurusan,
+            updated_at: edit.profile.updated_at,
+          });
+        }
+        cache.careerStats = Array.from(statMap.values());
+      } else {
+        cache.careerStats = serverStats;
+      }
+      cache.hasPublicStats = true;
+      safeWriteJson(LS_KEYS.CAREER_STATS, cache.careerStats);
+    }
+
     if (Array.isArray(data.publicJobs)) {
       cache.publicJobs = data.publicJobs;
       cache.hasPublicJobs = true;
+      safeWriteJson(LS_KEYS.PUBLIC_JOBS, cache.publicJobs);
     }
     emitDataChanged();
   } catch (err) {
@@ -132,15 +431,38 @@ export async function refreshPublicLandingData(): Promise<void> {
 }
 
 export async function refreshAuthenticatedData(): Promise<void> {
-  if (!inMemoryAuthToken) return;
+  const token = getAuthToken();
+  if (!token) return;
   try {
     const res = await fetch('/api/data', {
-      headers: { Authorization: `Bearer ${inMemoryAuthToken}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return;
     const data = await res.json();
-    cache.users = Array.isArray(data.users) ? data.users : [];
-    cache.profiles = Array.isArray(data.profiles) ? data.profiles : [];
+    const persistent = data.persistent !== false;
+    serverIsPersistent = persistent;
+    if (typeof data.engine === 'string') serverEngineName = data.engine;
+
+    const mergedProfiles = Array.isArray(data.profiles)
+      ? mergeServerProfilesWithLocalEdits(data.profiles, persistent)
+      : cache.profiles;
+
+    const profileByUserId = new Map(mergedProfiles.map((p) => [p.user_id, p]));
+
+    cache.users = (Array.isArray(data.users) ? data.users : []).map((u: User) => {
+      const normalized = normalizeUser(u);
+      const matchedProfile = profileByUserId.get(normalized.id);
+      if (matchedProfile && matchedProfile.avatar !== undefined) {
+        return {
+          ...normalized,
+          name: matchedProfile.name || normalized.name,
+          avatar: matchedProfile.avatar,
+        };
+      }
+      return normalized;
+    });
+
+    cache.profiles = mergedProfiles;
     cache.histories = Array.isArray(data.histories) ? data.histories : [];
     cache.documents = Array.isArray(data.documents) ? data.documents : [];
     cache.surveys = Array.isArray(data.surveys) ? data.surveys : [];
@@ -150,14 +472,44 @@ export async function refreshAuthenticatedData(): Promise<void> {
     cache.forum = Array.isArray(data.forum) ? data.forum : [];
     cache.notifications = Array.isArray(data.notifications) ? data.notifications : [];
     cache.audit = Array.isArray(data.audit) ? data.audit : [];
-    if (data.settings) cache.settings = data.settings;
-    if (Array.isArray(data.guruBk) && data.guruBk.length > 0) cache.guruBk = data.guruBk;
-    if (Array.isArray(data.emailLogs)) cache.emailLogs = data.emailLogs;
+    if (data.settings && shouldAcceptServerSettings(data.settings, persistent)) {
+      cache.settings = normalizeSettings(data.settings);
+      safeWriteJson(LS_KEYS.SETTINGS, cache.settings);
+    }
+    if (Array.isArray(data.guruBk) && data.guruBk.length > 0) {
+      cache.guruBk = data.guruBk;
+      safeWriteJson(LS_KEYS.GURU_BK, cache.guruBk);
+    }
+    if (Array.isArray(data.emailLogs)) {
+      cache.emailLogs = data.emailLogs;
+      safeWriteJson(LS_KEYS.EMAIL_LOGS, cache.emailLogs);
+    }
+
+    safeWriteJson(LS_KEYS.USERS, cache.users);
+    safeWriteJson(LS_KEYS.PROFILES, cache.profiles);
+    safeWriteJson(LS_KEYS.HISTORIES, cache.histories);
+    safeWriteJson(LS_KEYS.DOCUMENTS, cache.documents);
+    safeWriteJson(LS_KEYS.SURVEYS, cache.surveys);
+    safeWriteJson(LS_KEYS.QUESTIONS, cache.questions);
+    safeWriteJson(LS_KEYS.SUBMISSIONS, cache.submissions);
+    safeWriteJson(LS_KEYS.JOBS, cache.jobs);
+    safeWriteJson(LS_KEYS.FORUM, cache.forum);
+    safeWriteJson(LS_KEYS.NOTIFICATIONS, cache.notifications);
+    safeWriteJson(LS_KEYS.AUDIT, cache.audit);
 
     if (cache.currentUser) {
       const freshSelf = cache.users.find((u) => u.id === cache.currentUser?.id);
-      if (freshSelf) {
-        cache.currentUser = freshSelf;
+      const ownProfile = profileByUserId.get(cache.currentUser.id);
+      if (freshSelf || ownProfile) {
+        cache.currentUser = normalizeUser({
+          ...(freshSelf || cache.currentUser),
+          name: ownProfile?.name || freshSelf?.name || cache.currentUser.name,
+          avatar:
+            ownProfile?.avatar !== undefined
+              ? ownProfile.avatar
+              : freshSelf?.avatar ?? cache.currentUser.avatar,
+        });
+        safeWriteJson(LS_KEYS.CURRENT_USER, cache.currentUser);
         emitAuthChanged();
       }
     }
@@ -178,7 +530,7 @@ export function startPublicListeners(): void {
       sseSource = new EventSource('/api/events');
       sseSource.addEventListener('change', () => {
         void refreshPublicLandingData();
-        if (authActive && inMemoryAuthToken) {
+        if (authActive && getAuthToken()) {
           void refreshAuthenticatedData();
         }
       });
@@ -196,16 +548,18 @@ export function startAuthenticatedListeners(_uid?: string | number, _role?: User
 
 export function stopAuthenticatedListeners(): void {
   authActive = false;
-  inMemoryAuthToken = null;
+  setAuthToken(null);
   cache.users = [];
   cache.currentUser = null;
-  cache.profiles = [];
   cache.histories = [];
   cache.documents = [];
   cache.submissions = [];
   cache.audit = [];
   cache.notifications = [];
   cache.emailLogs = [];
+  safeRemoveKey(LS_KEYS.CURRENT_USER);
+  safeRemoveKey(LS_KEYS.USERS);
+  safeRemoveKey(LS_KEYS.AUDIT);
   emitAuthChanged();
   emitDataChanged();
 }
@@ -219,16 +573,25 @@ function nextNumericId(existingIds: number[]): number {
   return max + 1;
 }
 
-async function apiMutate(
+interface ApiMutateResult<T = any> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+  status?: number;
+}
+
+async function apiMutateDetailed<T = any>(
   method: string,
   url: string,
   body?: unknown,
-  onAfterSuccess?: () => void
-): Promise<void> {
+  onAfterSuccess?: (resData?: T) => void,
+  options?: { preserveLocalOnFailure?: boolean; suppressToast?: boolean }
+): Promise<ApiMutateResult<T>> {
+  const token = getAuthToken();
   try {
     const headers: Record<string, string> = {};
-    if (inMemoryAuthToken) {
-      headers['Authorization'] = `Bearer ${inMemoryAuthToken}`;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
@@ -240,21 +603,72 @@ async function apiMutate(
     });
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
-      throw new Error(errData?.error || errData?.message || `HTTP ${res.status}`);
+      const errMsg = errData?.error || errData?.message || `HTTP ${res.status}`;
+      const isAuthReject = res.status === 401 || res.status === 403;
+      const shouldPreserveSilently =
+        Boolean(options?.preserveLocalOnFailure) &&
+        (!serverIsPersistent || Boolean(errData?.ephemeralMiss)) &&
+        !isAuthReject;
+      if (shouldPreserveSilently) {
+        return { ok: false, error: errMsg, status: res.status };
+      }
+      if (!options?.suppressToast) {
+        emitSyncErrorToast(errMsg);
+      }
+      return { ok: false, error: errMsg, status: res.status };
     }
-    onAfterSuccess?.();
+    const resData = (await res.json().catch(() => undefined)) as T;
+    onAfterSuccess?.(resData);
+    return { ok: true, data: resData, status: res.status };
   } catch (err: any) {
     console.error(`API ${method} ${url} failed:`, err);
-    emitSyncErrorToast(err?.message || 'Gagal menyimpan perubahan ke database.');
-    void refreshAuthenticatedData();
-    void refreshPublicLandingData();
+    const errMsg = err?.message || 'Gagal menyimpan perubahan ke database.';
+    const shouldPreserveSilently = Boolean(options?.preserveLocalOnFailure) && !serverIsPersistent;
+    if (!shouldPreserveSilently && !options?.suppressToast) {
+      emitSyncErrorToast(errMsg);
+    }
+    return { ok: false, error: errMsg };
   }
 }
 
+async function apiMutate(
+  method: string,
+  url: string,
+  body?: unknown,
+  onAfterSuccess?: (resData?: any) => void,
+  options?: { preserveLocalOnFailure?: boolean }
+): Promise<boolean> {
+  const res = await apiMutateDetailed(method, url, body, onAfterSuccess, options);
+  return res.ok;
+}
+
 export const StorageService = {
+  getAuthToken,
+  setAuthToken,
+  isServerPersistent: (): boolean => serverIsPersistent,
+  getServerEngine: (): string => serverEngineName,
+
+  syncSessionFromServer: (user: User, profile: AlumniProfile | null): void => {
+    const normalizedUser = normalizeUser(user);
+    cache.currentUser = normalizedUser;
+    safeWriteJson(LS_KEYS.CURRENT_USER, normalizedUser);
+
+    if (profile) {
+      const normalizedProfile = normalizeProfile(profile);
+      const base = cache.profiles.length > 0 ? cache.profiles : INITIAL_ALUMNI_PROFILES.map(normalizeProfile);
+      const exists = base.some((p) => p.id === normalizedProfile.id);
+      cache.profiles = exists
+        ? base.map((p) => (p.id === normalizedProfile.id ? normalizedProfile : p))
+        : [normalizedProfile, ...base];
+      safeWriteJson(LS_KEYS.PROFILES, cache.profiles);
+    }
+    emitAuthChanged();
+    emitDataChanged();
+  },
+
   // --- PUBLIC REAL-TIME LANDING PAGE STATS ---
   getPublicCareerStats: (): PublicCareerStat[] => {
-    if (cache.hasPublicStats) {
+    if (cache.hasPublicStats && cache.careerStats.length > 0) {
       return cache.careerStats;
     }
     if (cache.profiles.length > 0) {
@@ -281,15 +695,37 @@ export const StorageService = {
   getCurrentUser: (): User | null => cache.currentUser,
 
   setCurrentUser: (user: User | null): void => {
-    cache.currentUser = user;
+    cache.currentUser = user ? normalizeUser(user) : null;
+    if (cache.currentUser) {
+      safeWriteJson(LS_KEYS.CURRENT_USER, cache.currentUser);
+    } else {
+      safeRemoveKey(LS_KEYS.CURRENT_USER);
+    }
     emitAuthChanged();
+    notifyOtherTabs('auth');
+  },
+
+  toggleUserActive: (userId: number): User | undefined => {
+    const target = cache.users.find((u) => u.id === userId);
+    if (!target) return undefined;
+    const updated = { ...target, isActive: !target.isActive };
+    cache.users = cache.users.map((u) => (u.id === userId ? updated : u));
+    safeWriteJson(LS_KEYS.USERS, cache.users);
+    emitDataChanged();
+    notifyOtherTabs('users');
+
+    void apiMutate('PUT', `/api/users/${userId}/status`, { isActive: updated.isActive }, undefined, {
+      preserveLocalOnFailure: true,
+    });
+    return updated;
   },
 
   // --- ALUMNI PROFILES ---
-  getAlumniList: (): AlumniProfile[] => cache.profiles,
+  getAlumniList: (): AlumniProfile[] =>
+    cache.profiles.length > 0 ? cache.profiles : INITIAL_ALUMNI_PROFILES.map(normalizeProfile),
 
   getAlumniById: (id: number): AlumniProfile | undefined => {
-    return cache.profiles.find((a) => a.id === id);
+    return StorageService.getAlumniList().find((a) => a.id === id);
   },
 
   getAlumniByUserId: (
@@ -297,7 +733,7 @@ export const StorageService = {
     userEmail?: string,
     userNisn?: string
   ): AlumniProfile | undefined => {
-    const list = cache.profiles;
+    const list = StorageService.getAlumniList();
     const byUserId = list.find((a) => a.user_id === userId);
     if (byUserId) {
       const cleanUserEmail = userEmail?.trim().toLowerCase();
@@ -322,10 +758,13 @@ export const StorageService = {
     return undefined;
   },
 
-  saveAlumni: (alumni: AlumniProfile): AlumniProfile => {
-    const updated: AlumniProfile = {
+  saveAlumniAsync: async (
+    alumni: AlumniProfile
+  ): Promise<{ ok: boolean; data: AlumniProfile; error?: string }> => {
+    const currentList = StorageService.getAlumniList();
+    const updated: AlumniProfile = normalizeProfile({
       ...alumni,
-      id: alumni.id && alumni.id > 0 ? alumni.id : nextNumericId(cache.profiles.map((p) => p.id)),
+      id: alumni.id && alumni.id > 0 ? alumni.id : nextNumericId(currentList.map((p) => p.id)),
       user_id:
         alumni.user_id && alumni.user_id > 0
           ? alumni.user_id
@@ -336,62 +775,200 @@ export const StorageService = {
           : alumni.jurusan || 'PPLG',
       created_at: alumni.created_at || new Date().toISOString().split('T')[0],
       updated_at: new Date().toISOString().split('T')[0],
-    };
+    });
     delete updated.password;
 
-    const idx = cache.profiles.findIndex((p) => p.id === updated.id);
-    if (idx >= 0) {
-      cache.profiles = cache.profiles.map((p) => (p.id === updated.id ? updated : p));
-    } else {
-      cache.profiles = [updated, ...cache.profiles];
-    }
+    const applyProfileToCache = (savedProf: AlumniProfile, synced: boolean) => {
+      const baseProfiles = cache.profiles.length > 0 ? cache.profiles : currentList;
+      const idx = baseProfiles.findIndex((p) => p.id === savedProf.id || p.id === updated.id);
+      if (idx >= 0) {
+        cache.profiles = baseProfiles.map((p) =>
+          p.id === savedProf.id || p.id === updated.id ? savedProf : p
+        );
+      } else {
+        cache.profiles = [savedProf, ...baseProfiles];
+      }
+      safeWriteJson(LS_KEYS.PROFILES, cache.profiles);
 
-    if (
-      cache.currentUser &&
-      (cache.currentUser.id === updated.user_id ||
-        cache.currentUser.email.toLowerCase() === updated.email.toLowerCase())
-    ) {
-      cache.currentUser = {
-        ...cache.currentUser,
-        name: updated.name,
-        nisn: updated.nisn,
-        avatar: updated.avatar !== undefined ? updated.avatar : cache.currentUser.avatar,
+      const edits = getProfileEdits();
+      if (synced && serverIsPersistent) {
+        delete edits[String(updated.id)];
+        delete edits[String(savedProf.id)];
+      } else {
+        edits[String(savedProf.id)] = {
+          profile: savedProf,
+          updatedAt: Date.now(),
+          syncedToServer: synced,
+        };
+      }
+      setProfileEdits(edits);
+
+      const statIdx = cache.careerStats.findIndex((s) => s.alumni_id === savedProf.id);
+      const updatedStat: PublicCareerStat = {
+        alumni_id: savedProf.id,
+        status_karir: savedProf.status_karir,
+        angkatan: savedProf.angkatan,
+        jurusan: savedProf.jurusan,
+        updated_at: savedProf.updated_at,
       };
-      emitAuthChanged();
-    }
-    emitDataChanged();
+      if (statIdx >= 0) {
+        cache.careerStats = cache.careerStats.map((s) =>
+          s.alumni_id === savedProf.id ? updatedStat : s
+        );
+      } else {
+        cache.careerStats = [updatedStat, ...cache.careerStats];
+      }
+      cache.hasPublicStats = true;
+      safeWriteJson(LS_KEYS.CAREER_STATS, cache.careerStats);
 
-    void apiMutate('PUT', '/api/alumni', updated, () => {
-      void refreshAuthenticatedData();
-      void refreshPublicLandingData();
+      if (
+        cache.currentUser &&
+        (cache.currentUser.id === savedProf.user_id ||
+          cache.currentUser.email.toLowerCase() === savedProf.email.toLowerCase())
+      ) {
+        cache.currentUser = normalizeUser({
+          ...cache.currentUser,
+          name: savedProf.name,
+          nisn: savedProf.nisn,
+          avatar: savedProf.avatar !== undefined ? savedProf.avatar : cache.currentUser.avatar,
+        });
+        safeWriteJson(LS_KEYS.CURRENT_USER, cache.currentUser);
+        emitAuthChanged();
+      }
+
+      cache.users = cache.users.map((u) =>
+        u.id === savedProf.user_id || u.email.toLowerCase() === savedProf.email.toLowerCase()
+          ? {
+              ...u,
+              name: savedProf.name,
+              nisn: savedProf.nisn,
+              avatar: savedProf.avatar !== undefined ? savedProf.avatar : u.avatar,
+            }
+          : u
+      );
+      safeWriteJson(LS_KEYS.USERS, cache.users);
+
+      emitDataChanged();
+      notifyOtherTabs('profiles');
+    };
+
+    applyProfileToCache(updated, false);
+
+    const res = await apiMutateDetailed<AlumniProfile>('PUT', '/api/alumni', updated, undefined, {
+      preserveLocalOnFailure: true,
+      suppressToast: true,
     });
 
+    if (res.ok && res.data) {
+      const serverProfile = normalizeProfile(res.data);
+      applyProfileToCache(serverProfile, true);
+      void refreshAuthenticatedData();
+      void refreshPublicLandingData();
+      return { ok: true, data: serverProfile };
+    }
+
+    if (!serverIsPersistent) {
+      return { ok: true, data: updated };
+    }
+
+    return { ok: false, data: updated, error: res.error || 'Gagal menyimpan profil ke Neon DB' };
+  },
+
+  saveAlumni: (alumni: AlumniProfile): AlumniProfile => {
+    const currentList = StorageService.getAlumniList();
+    const updated: AlumniProfile = normalizeProfile({
+      ...alumni,
+      id: alumni.id && alumni.id > 0 ? alumni.id : nextNumericId(currentList.map((p) => p.id)),
+      user_id:
+        alumni.user_id && alumni.user_id > 0
+          ? alumni.user_id
+          : nextNumericId(cache.users.map((u) => u.id)),
+      jurusan:
+        alumni.jurusan && alumni.jurusan.toUpperCase().includes('TKJ')
+          ? 'PPLG'
+          : alumni.jurusan || 'PPLG',
+      created_at: alumni.created_at || new Date().toISOString().split('T')[0],
+      updated_at: new Date().toISOString().split('T')[0],
+    });
+    delete updated.password;
+    void StorageService.saveAlumniAsync(updated);
     return updated;
   },
 
-  deleteAlumni: (id: number): boolean => {
-    const exists = cache.profiles.some((p) => p.id === id);
-    if (!exists) return false;
-    cache.profiles = cache.profiles.filter((p) => p.id !== id);
-    cache.careerStats = cache.careerStats.filter((s) => s.alumni_id !== id);
-    emitDataChanged();
+  importAlumniBatchAsync: async (
+    profiles: Partial<AlumniProfile>[]
+  ): Promise<{ ok: boolean; importedCount: number; profiles: AlumniProfile[]; error?: string }> => {
+    const res = await apiMutateDetailed<{ importedCount: number; profiles: AlumniProfile[] }>(
+      'POST',
+      '/api/alumni/batch-import',
+      { profiles },
+      undefined,
+      { suppressToast: true }
+    );
+    if (res.ok && res.data) {
+      await Promise.all([refreshAuthenticatedData(), refreshPublicLandingData()]);
+      notifyOtherTabs('profiles');
+      return {
+        ok: true,
+        importedCount: res.data.importedCount,
+        profiles: res.data.profiles || [],
+      };
+    }
+    return {
+      ok: false,
+      importedCount: 0,
+      profiles: [],
+      error: res.error || 'Gagal mengimpor data alumni ke database',
+    };
+  },
 
-    void apiMutate('DELETE', `/api/alumni/${id}`);
+  deleteAlumni: (id: number): boolean => {
+    const list = StorageService.getAlumniList();
+    const exists = list.some((p) => p.id === id);
+    if (!exists) return false;
+    cache.profiles = list.filter((p) => p.id !== id);
+    cache.careerStats = cache.careerStats.filter((s) => s.alumni_id !== id);
+    safeWriteJson(LS_KEYS.PROFILES, cache.profiles);
+    safeWriteJson(LS_KEYS.CAREER_STATS, cache.careerStats);
+
+    const edits = getProfileEdits();
+    delete edits[String(id)];
+    setProfileEdits(edits);
+
+    emitDataChanged();
+    notifyOtherTabs('profiles');
+
+    void apiMutate('DELETE', `/api/alumni/${id}`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
     return true;
   },
 
   deleteMultipleAlumni: (ids: number[]): number => {
     const idSet = new Set(ids);
-    const toDelete = cache.profiles.filter((a) => idSet.has(a.id));
+    const list = StorageService.getAlumniList();
+    const toDelete = list.filter((a) => idSet.has(a.id));
     if (toDelete.length === 0) return 0;
 
-    cache.profiles = cache.profiles.filter((a) => !idSet.has(a.id));
+    cache.profiles = list.filter((a) => !idSet.has(a.id));
     cache.careerStats = cache.careerStats.filter((s) => !idSet.has(s.alumni_id));
     cache.histories = cache.histories.filter((h) => !idSet.has(h.alumni_id));
     cache.documents = cache.documents.filter((d) => !idSet.has(d.alumni_id));
-    emitDataChanged();
+    safeWriteJson(LS_KEYS.PROFILES, cache.profiles);
+    safeWriteJson(LS_KEYS.CAREER_STATS, cache.careerStats);
+    safeWriteJson(LS_KEYS.HISTORIES, cache.histories);
+    safeWriteJson(LS_KEYS.DOCUMENTS, cache.documents);
 
-    void apiMutate('POST', '/api/alumni/batch-delete', { ids });
+    const edits = getProfileEdits();
+    for (const id of ids) delete edits[String(id)];
+    setProfileEdits(edits);
+
+    emitDataChanged();
+    notifyOtherTabs('profiles');
+
+    void apiMutate('POST', '/api/alumni/batch-delete', { ids }, undefined, {
+      preserveLocalOnFailure: true,
+    });
     return toDelete.length;
   },
 
@@ -411,16 +988,20 @@ export const StorageService = {
     } else {
       cache.histories = [...cache.histories, saved];
     }
+    safeWriteJson(LS_KEYS.HISTORIES, cache.histories);
     emitDataChanged();
 
-    void apiMutate('PUT', '/api/histories', saved);
+    void apiMutate('PUT', '/api/histories', saved, undefined, { preserveLocalOnFailure: true });
     return saved;
   },
 
   deleteCareerHistory: (id: number): void => {
     cache.histories = cache.histories.filter((h) => h.id !== id);
+    safeWriteJson(LS_KEYS.HISTORIES, cache.histories);
     emitDataChanged();
-    void apiMutate('DELETE', `/api/histories/${id}`);
+    void apiMutate('DELETE', `/api/histories/${id}`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   // --- DOCUMENTS ---
@@ -432,16 +1013,20 @@ export const StorageService = {
     const newId = nextNumericId(cache.documents.map((d) => d.id));
     const saved: DocumentFile = { ...docItem, id: newId };
     cache.documents = [...cache.documents, saved];
+    safeWriteJson(LS_KEYS.DOCUMENTS, cache.documents);
     emitDataChanged();
 
-    void apiMutate('POST', '/api/documents', saved);
+    void apiMutate('POST', '/api/documents', saved, undefined, { preserveLocalOnFailure: true });
     return saved;
   },
 
   deleteDocument: (id: number): void => {
     cache.documents = cache.documents.filter((d) => d.id !== id);
+    safeWriteJson(LS_KEYS.DOCUMENTS, cache.documents);
     emitDataChanged();
-    void apiMutate('DELETE', `/api/documents/${id}`);
+    void apiMutate('DELETE', `/api/documents/${id}`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   // --- TRACER SURVEYS & QUESTIONS ---
@@ -457,15 +1042,17 @@ export const StorageService = {
     const newId =
       survey.id && survey.id > 0 ? survey.id : nextNumericId(cache.surveys.map((s) => s.id));
     const saved: TracerSurvey = { ...survey, id: newId };
-    const idx = cache.surveys.findIndex((s) => s.id === newId);
+    const base = cache.surveys.length > 0 ? cache.surveys : INITIAL_TRACER_SURVEYS;
+    const idx = base.findIndex((s) => s.id === newId);
     if (idx >= 0) {
-      cache.surveys = cache.surveys.map((s) => (s.id === newId ? saved : s));
+      cache.surveys = base.map((s) => (s.id === newId ? saved : s));
     } else {
-      cache.surveys = [...cache.surveys, saved];
+      cache.surveys = [...base, saved];
     }
+    safeWriteJson(LS_KEYS.SURVEYS, cache.surveys);
     emitDataChanged();
 
-    void apiMutate('PUT', '/api/surveys', saved);
+    void apiMutate('PUT', '/api/surveys', saved, undefined, { preserveLocalOnFailure: true });
     return saved;
   },
 
@@ -475,37 +1062,47 @@ export const StorageService = {
   },
 
   saveQuestion: (question: TracerQuestion): TracerQuestion => {
+    const base = cache.questions.length > 0 ? cache.questions : INITIAL_TRACER_QUESTIONS;
     const newId =
       question.id && question.id > 0
         ? question.id
-        : nextNumericId(cache.questions.map((q) => q.id));
+        : nextNumericId(base.map((q) => q.id));
     const saved: TracerQuestion = { ...question, id: newId };
-    const idx = cache.questions.findIndex((q) => q.id === newId);
+    const idx = base.findIndex((q) => q.id === newId);
     if (idx >= 0) {
-      cache.questions = cache.questions.map((q) => (q.id === newId ? saved : q));
+      cache.questions = base.map((q) => (q.id === newId ? saved : q));
     } else {
-      cache.questions = [...cache.questions, saved];
+      cache.questions = [...base, saved];
     }
+    safeWriteJson(LS_KEYS.QUESTIONS, cache.questions);
     emitDataChanged();
 
-    void apiMutate('PUT', '/api/questions', saved);
+    void apiMutate('PUT', '/api/questions', saved, undefined, { preserveLocalOnFailure: true });
     return saved;
   },
 
   deleteQuestion: (id: number): void => {
-    cache.questions = cache.questions.filter((q) => q.id !== id);
+    const base = cache.questions.length > 0 ? cache.questions : INITIAL_TRACER_QUESTIONS;
+    cache.questions = base.filter((q) => q.id !== id);
+    safeWriteJson(LS_KEYS.QUESTIONS, cache.questions);
     emitDataChanged();
-    void apiMutate('DELETE', `/api/questions/${id}`);
+    void apiMutate('DELETE', `/api/questions/${id}`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   deleteMultipleQuestions: (ids: number[]): number => {
     const idSet = new Set(ids);
-    const toDelete = cache.questions.filter((q) => idSet.has(q.id));
+    const base = cache.questions.length > 0 ? cache.questions : INITIAL_TRACER_QUESTIONS;
+    const toDelete = base.filter((q) => idSet.has(q.id));
     if (toDelete.length === 0) return 0;
-    cache.questions = cache.questions.filter((q) => !idSet.has(q.id));
+    cache.questions = base.filter((q) => !idSet.has(q.id));
+    safeWriteJson(LS_KEYS.QUESTIONS, cache.questions);
     emitDataChanged();
 
-    void apiMutate('POST', '/api/questions/batch-delete', { ids });
+    void apiMutate('POST', '/api/questions/batch-delete', { ids }, undefined, {
+      preserveLocalOnFailure: true,
+    });
     return toDelete.length;
   },
 
@@ -530,16 +1127,19 @@ export const StorageService = {
     } else {
       cache.submissions = [...cache.submissions, saved];
     }
+    safeWriteJson(LS_KEYS.SUBMISSIONS, cache.submissions);
 
     const alumni = StorageService.getAlumniById(sub.alumni_id);
     if (alumni) {
-      cache.profiles = cache.profiles.map((p) =>
+      const updatedProfiles = StorageService.getAlumniList().map((p) =>
         p.id === alumni.id ? { ...p, status_tracer: saved.status } : p
       );
+      cache.profiles = updatedProfiles;
+      safeWriteJson(LS_KEYS.PROFILES, cache.profiles);
     }
     emitDataChanged();
 
-    void apiMutate('POST', '/api/submissions', saved);
+    void apiMutate('POST', '/api/submissions', saved, undefined, { preserveLocalOnFailure: true });
     return saved;
   },
 
@@ -551,38 +1151,58 @@ export const StorageService = {
   },
 
   saveJob: (job: JobPosting): JobPosting => {
-    const newId = job.id && job.id > 0 ? job.id : nextNumericId(cache.jobs.map((j) => j.id));
+    const base = StorageService.getJobs();
+    const newId = job.id && job.id > 0 ? job.id : nextNumericId(base.map((j) => j.id));
     const saved: JobPosting = {
       ...job,
       id: newId,
       created_at: job.created_at || new Date().toISOString().split('T')[0],
     };
-    const idx = cache.jobs.findIndex((j) => j.id === newId);
+    const idx = base.findIndex((j) => j.id === newId);
     if (idx >= 0) {
-      cache.jobs = cache.jobs.map((j) => (j.id === newId ? saved : j));
+      cache.jobs = base.map((j) => (j.id === newId ? saved : j));
     } else {
-      cache.jobs = [saved, ...cache.jobs];
+      cache.jobs = [saved, ...base];
     }
+    safeWriteJson(LS_KEYS.JOBS, cache.jobs);
+    cache.publicJobs = cache.jobs.filter((j) => j.status === 'Published');
+    cache.hasPublicJobs = true;
+    safeWriteJson(LS_KEYS.PUBLIC_JOBS, cache.publicJobs);
     emitDataChanged();
+    notifyOtherTabs('jobs');
 
-    void apiMutate('PUT', '/api/jobs', saved);
+    void apiMutate('PUT', '/api/jobs', saved, undefined, { preserveLocalOnFailure: true });
     return saved;
   },
 
   deleteJob: (id: number): void => {
-    cache.jobs = cache.jobs.filter((j) => j.id !== id);
+    const base = StorageService.getJobs();
+    cache.jobs = base.filter((j) => j.id !== id);
+    cache.publicJobs = cache.jobs.filter((j) => j.status === 'Published');
+    safeWriteJson(LS_KEYS.JOBS, cache.jobs);
+    safeWriteJson(LS_KEYS.PUBLIC_JOBS, cache.publicJobs);
     emitDataChanged();
-    void apiMutate('DELETE', `/api/jobs/${id}`);
+    notifyOtherTabs('jobs');
+    void apiMutate('DELETE', `/api/jobs/${id}`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   deleteMultipleJobs: (ids: number[]): number => {
     const idSet = new Set(ids);
-    const toDelete = cache.jobs.filter((j) => idSet.has(j.id));
+    const base = StorageService.getJobs();
+    const toDelete = base.filter((j) => idSet.has(j.id));
     if (toDelete.length === 0) return 0;
-    cache.jobs = cache.jobs.filter((j) => !idSet.has(j.id));
+    cache.jobs = base.filter((j) => !idSet.has(j.id));
+    cache.publicJobs = cache.jobs.filter((j) => j.status === 'Published');
+    safeWriteJson(LS_KEYS.JOBS, cache.jobs);
+    safeWriteJson(LS_KEYS.PUBLIC_JOBS, cache.publicJobs);
     emitDataChanged();
+    notifyOtherTabs('jobs');
 
-    void apiMutate('POST', '/api/jobs/batch-delete', { ids });
+    void apiMutate('POST', '/api/jobs/batch-delete', { ids }, undefined, {
+      preserveLocalOnFailure: true,
+    });
     return toDelete.length;
   },
 
@@ -615,11 +1235,18 @@ export const StorageService = {
       comments: [],
     };
     cache.forum = [saved, ...cache.forum];
+    safeWriteJson(LS_KEYS.FORUM, cache.forum);
     emitDataChanged();
 
-    void apiMutate('POST', '/api/forum', saved, () => {
-      void refreshAuthenticatedData();
-    });
+    void apiMutate(
+      'POST',
+      '/api/forum',
+      saved,
+      () => {
+        void refreshAuthenticatedData();
+      },
+      { preserveLocalOnFailure: true }
+    );
     return saved;
   },
 
@@ -632,9 +1259,12 @@ export const StorageService = {
     cache.forum = cache.forum.map((p) =>
       p.id === postId ? { ...p, likes: nextLikes, liked_by_user: nextLiked } : p
     );
+    safeWriteJson(LS_KEYS.FORUM, cache.forum);
     emitDataChanged();
 
-    void apiMutate('POST', `/api/forum/${postId}/like`);
+    void apiMutate('POST', `/api/forum/${postId}/like`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   addComment: (
@@ -664,9 +1294,16 @@ export const StorageService = {
     cache.forum = cache.forum.map((p) =>
       p.id === postId ? { ...p, comments: [...(p.comments || []), newComment] } : p
     );
+    safeWriteJson(LS_KEYS.FORUM, cache.forum);
     emitDataChanged();
 
-    void apiMutate('POST', `/api/forum/${postId}/comment`, { content: comment.content });
+    void apiMutate(
+      'POST',
+      `/api/forum/${postId}/comment`,
+      { content: comment.content },
+      undefined,
+      { preserveLocalOnFailure: true }
+    );
   },
 
   toggleLockPost: (postId: number): void => {
@@ -675,14 +1312,20 @@ export const StorageService = {
     cache.forum = cache.forum.map((p) =>
       p.id === postId ? { ...p, is_locked: !p.is_locked } : p
     );
+    safeWriteJson(LS_KEYS.FORUM, cache.forum);
     emitDataChanged();
-    void apiMutate('POST', `/api/forum/${postId}/lock`);
+    void apiMutate('POST', `/api/forum/${postId}/lock`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   deletePost: (postId: number): void => {
     cache.forum = cache.forum.filter((p) => p.id !== postId);
+    safeWriteJson(LS_KEYS.FORUM, cache.forum);
     emitDataChanged();
-    void apiMutate('DELETE', `/api/forum/${postId}`);
+    void apiMutate('DELETE', `/api/forum/${postId}`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   // --- NOTIFICATIONS ---
@@ -692,14 +1335,20 @@ export const StorageService = {
     cache.notifications = cache.notifications.map((n) =>
       n.id === id ? { ...n, is_read: true } : n
     );
+    safeWriteJson(LS_KEYS.NOTIFICATIONS, cache.notifications);
     emitDataChanged();
-    void apiMutate('POST', `/api/notifications/read/${id}`);
+    void apiMutate('POST', `/api/notifications/read/${id}`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   markAllNotificationsAsRead: (): void => {
     cache.notifications = cache.notifications.map((n) => ({ ...n, is_read: true }));
+    safeWriteJson(LS_KEYS.NOTIFICATIONS, cache.notifications);
     emitDataChanged();
-    void apiMutate('POST', '/api/notifications/read-all');
+    void apiMutate('POST', '/api/notifications/read-all', undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   sendBroadcastNotification: (
@@ -723,16 +1372,23 @@ export const StorageService = {
       created_at: timeStr,
     };
     cache.notifications = [item, ...cache.notifications];
+    safeWriteJson(LS_KEYS.NOTIFICATIONS, cache.notifications);
     emitDataChanged();
 
-    void apiMutate('POST', '/api/notifications/broadcast', { title, message, target_role });
+    void apiMutate(
+      'POST',
+      '/api/notifications/broadcast',
+      { title, message, target_role },
+      undefined,
+      { preserveLocalOnFailure: true }
+    );
   },
 
   // --- AUDIT LOGS ---
   getAuditLogs: (): AuditLog[] => cache.audit,
 
   addAuditLog: (userName: string, userRole: string, activity: string): void => {
-    if (!inMemoryAuthToken) return;
+    if (!getAuthToken()) return;
     const newId = nextNumericId(cache.audit.map((l) => l.id));
     const now = new Date();
     const timeStr = `${now.toISOString().split('T')[0]} ${now.toTimeString().split(' ')[0]}`;
@@ -745,17 +1401,23 @@ export const StorageService = {
       timestamp: timeStr,
     };
     cache.audit = [item, ...cache.audit];
+    safeWriteJson(LS_KEYS.AUDIT, cache.audit);
     emitDataChanged();
 
-    void apiMutate('POST', '/api/audit', { activity });
+    void apiMutate('POST', '/api/audit', { activity }, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   deleteAuditLog: (id: number): boolean => {
     const exists = cache.audit.some((l) => l.id === id);
     if (!exists) return false;
     cache.audit = cache.audit.filter((l) => l.id !== id);
+    safeWriteJson(LS_KEYS.AUDIT, cache.audit);
     emitDataChanged();
-    void apiMutate('DELETE', `/api/audit/${id}`);
+    void apiMutate('DELETE', `/api/audit/${id}`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
     return true;
   },
 
@@ -764,25 +1426,71 @@ export const StorageService = {
     const toDelete = cache.audit.filter((l) => idSet.has(l.id));
     if (toDelete.length === 0) return 0;
     cache.audit = cache.audit.filter((l) => !idSet.has(l.id));
+    safeWriteJson(LS_KEYS.AUDIT, cache.audit);
     emitDataChanged();
-    void apiMutate('POST', '/api/audit/batch-delete', { ids });
+    void apiMutate('POST', '/api/audit/batch-delete', { ids }, undefined, {
+      preserveLocalOnFailure: true,
+    });
     return toDelete.length;
   },
 
   clearAllAuditLogs: (): void => {
     cache.audit = [];
+    safeWriteJson(LS_KEYS.AUDIT, cache.audit);
     emitDataChanged();
-    void apiMutate('DELETE', '/api/audit');
+    void apiMutate('DELETE', '/api/audit', undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   // --- SCHOOL SETTINGS ---
   getSchoolSettings: (): SchoolSettings => cache.settings,
 
-  saveSchoolSettings: (settings: SchoolSettings): SchoolSettings => {
-    cache.settings = { ...settings };
+  saveSchoolSettingsAsync: async (
+    settings: SchoolSettings
+  ): Promise<{ ok: boolean; data: SchoolSettings; error?: string }> => {
+    const normalized = normalizeSettings(settings);
+    cache.settings = normalized;
+    safeWriteJson(LS_KEYS.SETTINGS, normalized);
+    setSettingsMeta({
+      updatedAt: Date.now(),
+      customized: true,
+      syncedToServer: false,
+    });
     emitDataChanged();
-    void apiMutate('PUT', '/api/settings', settings);
-    return settings;
+    notifyOtherTabs('settings');
+
+    const res = await apiMutateDetailed<SchoolSettings>('PUT', '/api/settings', normalized, undefined, {
+      preserveLocalOnFailure: true,
+      suppressToast: true,
+    });
+
+    if (res.ok && res.data) {
+      const serverNormalized = normalizeSettings(res.data);
+      cache.settings = serverNormalized;
+      safeWriteJson(LS_KEYS.SETTINGS, serverNormalized);
+      setSettingsMeta({
+        updatedAt: Date.now(),
+        customized: false,
+        syncedToServer: true,
+      });
+      emitDataChanged();
+      notifyOtherTabs('settings');
+      void refreshPublicLandingData();
+      return { ok: true, data: serverNormalized };
+    }
+
+    if (!serverIsPersistent) {
+      return { ok: true, data: normalized };
+    }
+
+    return { ok: false, data: normalized, error: res.error || 'Gagal menyimpan pengaturan sekolah ke database' };
+  },
+
+  saveSchoolSettings: (settings: SchoolSettings): SchoolSettings => {
+    const normalized = normalizeSettings(settings);
+    void StorageService.saveSchoolSettingsAsync(normalized);
+    return normalized;
   },
 
   // --- PROFIL GURU BK (CRUD PENERBIT LAPORAN) ---
@@ -795,39 +1503,68 @@ export const StorageService = {
     return list.find((g) => g.is_default) || list[0] || INITIAL_GURU_BK_PROFILES[0];
   },
 
+  saveGuruBkProfileAsync: async (
+    data: Omit<GuruBkProfile, 'id' | 'updated_at'> & { id?: number }
+  ): Promise<{ ok: boolean; data: GuruBkProfile; error?: string }> => {
+    const today = new Date().toISOString().split('T')[0];
+    const list = [...StorageService.getGuruBkProfiles()];
+    const newId = data.id || nextNumericId(list.map((g) => g.id));
+
+    const applyToCache = (savedItem: GuruBkProfile) => {
+      const currentList = [...StorageService.getGuruBkProfiles()];
+      const updatedList = currentList.map((item) =>
+        savedItem.is_default ? { ...item, is_default: false } : item
+      );
+      const existingIdx = updatedList.findIndex((g) => g.id === savedItem.id);
+      if (existingIdx >= 0) {
+        updatedList[existingIdx] = savedItem;
+      } else {
+        updatedList.push(savedItem);
+      }
+      if (!updatedList.some((g) => g.is_default) && updatedList.length > 0) {
+        updatedList[0] = { ...updatedList[0], is_default: true };
+      }
+      cache.guruBk = updatedList;
+      safeWriteJson(LS_KEYS.GURU_BK, cache.guruBk);
+      emitDataChanged();
+      notifyOtherTabs('guruBk');
+    };
+
+    const optimistic: GuruBkProfile = {
+      ...data,
+      id: newId,
+      is_default: data.is_default ?? list.length === 0,
+      updated_at: today,
+    };
+    applyToCache(optimistic);
+
+    const res = await apiMutateDetailed<GuruBkProfile>('PUT', '/api/guru-bk', optimistic, undefined, {
+      preserveLocalOnFailure: true,
+      suppressToast: true,
+    });
+    if (res.ok && res.data) {
+      applyToCache(res.data);
+      return { ok: true, data: res.data };
+    }
+    if (!serverIsPersistent) {
+      return { ok: true, data: optimistic };
+    }
+    return { ok: false, data: optimistic, error: res.error || 'Gagal menyimpan profil Guru BK ke database' };
+  },
+
   saveGuruBkProfile: (
     data: Omit<GuruBkProfile, 'id' | 'updated_at'> & { id?: number }
   ): GuruBkProfile => {
     const today = new Date().toISOString().split('T')[0];
     const list = [...StorageService.getGuruBkProfiles()];
     const newId = data.id || nextNumericId(list.map((g) => g.id));
-
-    const updatedList = list.map((item) =>
-      data.is_default ? { ...item, is_default: false } : item
-    );
-
-    const existingIdx = updatedList.findIndex((g) => g.id === newId);
     const saved: GuruBkProfile = {
       ...data,
       id: newId,
-      is_default: data.is_default ?? updatedList.length === 0,
+      is_default: data.is_default ?? list.length === 0,
       updated_at: today,
     };
-
-    if (existingIdx >= 0) {
-      updatedList[existingIdx] = saved;
-    } else {
-      updatedList.push(saved);
-    }
-
-    if (!updatedList.some((g) => g.is_default) && updatedList.length > 0) {
-      updatedList[0] = { ...updatedList[0], is_default: true };
-    }
-
-    cache.guruBk = updatedList;
-    emitDataChanged();
-
-    void apiMutate('PUT', '/api/guru-bk', saved);
+    void StorageService.saveGuruBkProfileAsync(saved);
     return saved;
   },
 
@@ -836,8 +1573,12 @@ export const StorageService = {
       ...g,
       is_default: g.id === id,
     }));
+    safeWriteJson(LS_KEYS.GURU_BK, cache.guruBk);
     emitDataChanged();
-    void apiMutate('POST', `/api/guru-bk/${id}/default`);
+    notifyOtherTabs('guruBk');
+    void apiMutate('POST', `/api/guru-bk/${id}/default`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
   },
 
   deleteGuruBkProfile: (id: number): boolean => {
@@ -850,8 +1591,12 @@ export const StorageService = {
       filtered[0] = { ...filtered[0], is_default: true };
     }
     cache.guruBk = filtered;
+    safeWriteJson(LS_KEYS.GURU_BK, cache.guruBk);
     emitDataChanged();
-    void apiMutate('DELETE', `/api/guru-bk/${id}`);
+    notifyOtherTabs('guruBk');
+    void apiMutate('DELETE', `/api/guru-bk/${id}`, undefined, undefined, {
+      preserveLocalOnFailure: true,
+    });
     return true;
   },
 
@@ -860,11 +1605,12 @@ export const StorageService = {
 
   saveEmailLog: (log: EmailNotificationLog): void => {
     cache.emailLogs = [log, ...cache.emailLogs].slice(0, 200);
+    safeWriteJson(LS_KEYS.EMAIL_LOGS, cache.emailLogs);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('alumnitrack_emails_changed'));
     }
-    if (inMemoryAuthToken) {
-      void apiMutate('POST', '/api/email-logs', log);
+    if (getAuthToken()) {
+      void apiMutate('POST', '/api/email-logs', log, undefined, { preserveLocalOnFailure: true });
     }
   },
 };

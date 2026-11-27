@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   GraduationCap, 
   Lock, 
@@ -26,9 +26,16 @@ interface RegisterPageProps {
 }
 
 export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate }) => {
-  const { register, isLoading } = useAuth();
+  const { register, isSubmitting } = useAuth();
   const { showToast } = useNotification();
-  const schoolSettings = StorageService.getSchoolSettings();
+  const [schoolSettings, setSchoolSettings] = useState(StorageService.getSchoolSettings());
+
+  useEffect(() => {
+    const syncSettings = () => setSchoolSettings(StorageService.getSchoolSettings());
+    syncSettings();
+    window.addEventListener('alumnitrack_data_changed', syncSettings);
+    return () => window.removeEventListener('alumnitrack_data_changed', syncSettings);
+  }, []);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -402,10 +409,10 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate }) => {
               {/* Submit Button */}
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isSubmitting}
                 className="w-full py-3 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer"
               >
-                {isLoading ? (
+                {isSubmitting ? (
                   <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <>

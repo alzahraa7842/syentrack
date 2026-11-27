@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { useNotification } from '../../contexts/NotificationContext';
 import { StorageService } from '../../services/storageService';
+import { resolveAssetUrl } from '../../constants/assets';
 
 interface NavbarProps {
   onToggleSidebar?: () => void;
@@ -181,7 +182,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               {user?.avatar ? (
                 <img
-                  src={user.avatar}
+                  src={resolveAssetUrl(user.avatar)}
                   alt={user?.name || "User"}
                   className="w-8 h-8 rounded-full object-cover ring-2 ring-emerald-600/20"
                   referrerPolicy="no-referrer"

@@ -15,13 +15,12 @@ import {
   Radio,
   UserX
 } from 'lucide-react';
-import { StorageService } from '../services/storageService';
+import { StorageService, refreshPublicLandingData } from '../services/storageService';
+import { DEFAULT_HERO_IMAGE, resolveAssetUrl } from '../constants/assets';
 
 interface LandingPageProps {
   onNavigate: (path: string) => void;
 }
-
-const DEFAULT_HERO_IMAGE = '/src/assets/images/hero_alumni_careers_1790318409918.jpg';
 
 // Largest-remainder rounding so percentages always sum exactly to 100%
 function calculateExactPercentages(counts: number[], total: number): number[] {
@@ -43,8 +42,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
   const [careerStats, setCareerStats] = useState(StorageService.getPublicCareerStats());
   const [jobs, setJobs] = useState(StorageService.getJobs().filter(j => j.status === 'Published'));
   const [heroImgError, setHeroImgError] = useState(false);
+  const [heroFallbackError, setHeroFallbackError] = useState(false);
 
-  // Real-time synchronization whenever Cloud Firestore onSnapshot delivers updates
+  // Real-time synchronization whenever data changes locally or on backend
   useEffect(() => {
     const handleDataChange = () => {
       setSchoolSettings(StorageService.getSchoolSettings());
@@ -52,6 +52,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
       setJobs(StorageService.getJobs().filter(j => j.status === 'Published'));
     };
 
+    handleDataChange();
+    void refreshPublicLandingData();
     window.addEventListener('alumnitrack_data_changed', handleDataChange);
     return () => {
       window.removeEventListener('alumnitrack_data_changed', handleDataChange);
@@ -60,6 +62,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
 
   useEffect(() => {
     setHeroImgError(false);
+    setHeroFallbackError(false);
   }, [schoolSettings.landing_hero_image]);
 
   // Aggregate real-time public statistics that strictly sum to totalAlumni
@@ -166,12 +169,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
             {/* Visual Hero Card */}
             <div className="lg:col-span-5 relative">
               <div className="relative rounded-2xl overflow-hidden shadow-2xl border border-slate-200 aspect-16/10 bg-slate-900">
-                {!heroImgError && (
+                {!heroFallbackError && (
                   <img
-                    src={schoolSettings.landing_hero_image || DEFAULT_HERO_IMAGE}
+                    src={
+                      heroImgError
+                        ? DEFAULT_HERO_IMAGE
+                        : resolveAssetUrl(schoolSettings.landing_hero_image, DEFAULT_HERO_IMAGE)
+                    }
                     alt="Alumni Prestasi Berkarir"
                     className="w-full h-full object-cover opacity-90"
-                    onError={() => setHeroImgError(true)}
+                    onError={() => {
+                      if (!heroImgError) {
+                        setHeroImgError(true);
+                      } else {
+                        setHeroFallbackError(true);
+                      }
+                    }}
                   />
                 )}
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent flex flex-col justify-end p-6 text-white">

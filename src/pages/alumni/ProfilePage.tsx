@@ -29,6 +29,7 @@ import { Badge } from '../../components/common/Badge';
 import { Modal } from '../../components/common/Modal';
 import { useNotification } from '../../contexts/NotificationContext';
 import { compressImageFile } from '../../utils/imageUtils';
+import { resolveAssetUrl } from '../../constants/assets';
 
 export const AlumniProfilePage: React.FC = () => {
   const { user, alumniProfile, refreshUser } = useAuth();
@@ -38,6 +39,8 @@ export const AlumniProfilePage: React.FC = () => {
   const [photoUrlInput, setPhotoUrlInput] = useState('');
   const [photoImgError, setPhotoImgError] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const isDirtyRef = useRef(false);
 
   // Primary active alumni data
   const currentAlumni: AlumniProfile = alumniProfile || 
@@ -56,6 +59,7 @@ export const AlumniProfilePage: React.FC = () => {
       status_karir: 'Bekerja',
       status_tracer: 'Belum Mengisi',
       privacy_setting: 'PUBLIC',
+      avatar: user?.avatar,
       updated_at: new Date().toISOString().split('T')[0],
       created_at: new Date().toISOString().split('T')[0],
     };
@@ -89,6 +93,13 @@ export const AlumniProfilePage: React.FC = () => {
     const sync = () => {
       setCareerHistories(StorageService.getCareerHistories(currentAlumni.id));
       setDocuments(StorageService.getDocuments(currentAlumni.id));
+      setProfile((prev) => {
+        if (prev.id === 999) {
+          const fresh = StorageService.getAlumniById(currentAlumni.id);
+          if (fresh) return { ...fresh };
+        }
+        return prev;
+      });
     };
     sync();
     window.addEventListener('alumnitrack_data_changed', sync);
@@ -96,10 +107,17 @@ export const AlumniProfilePage: React.FC = () => {
   }, [currentAlumni.id]);
 
   useEffect(() => {
-    if (alumniProfile && alumniProfile.id === profile.id && alumniProfile.avatar !== profile.avatar) {
-      setProfile(prev => ({ ...prev, avatar: alumniProfile.avatar }));
-    }
-  }, [alumniProfile?.avatar, alumniProfile?.id]);
+    if (!alumniProfile) return;
+    setProfile((prev) => {
+      if (prev.id === 999 && alumniProfile.id !== 999) {
+        return { ...alumniProfile };
+      }
+      if (!isDirtyRef.current && alumniProfile.id === prev.id && alumniProfile.avatar !== prev.avatar) {
+        return { ...prev, avatar: alumniProfile.avatar };
+      }
+      return prev;
+    });
+  }, [alumniProfile]);
 
   const reloadData = () => {
     const updated = StorageService.getAlumniById(currentAlumni.id);
@@ -109,13 +127,21 @@ export const AlumniProfilePage: React.FC = () => {
     refreshUser();
   };
 
-  const persistAvatar = (newAvatar: string, auditMsg: string, toastMsg: string) => {
+  const persistAvatar = async (newAvatar: string, auditMsg: string, toastMsg: string) => {
+    const previousAvatar = profile.avatar;
     const updatedProfile: AlumniProfile = { ...profile, avatar: newAvatar };
     setProfile(updatedProfile);
     setPhotoImgError(false);
-    const saved = StorageService.saveAlumni(updatedProfile);
-    setProfile(saved);
-    StorageService.addAuditLog(user?.name || saved.name, 'ALUMNI', auditMsg);
+
+    const res = await StorageService.saveAlumniAsync(updatedProfile);
+    if (!res.ok) {
+      setProfile((prev) => ({ ...prev, avatar: previousAvatar }));
+      showToast('error', res.error || 'Gagal menyimpan foto profil ke database');
+      return;
+    }
+
+    setProfile(res.data);
+    StorageService.addAuditLog(user?.name || res.data.name, 'ALUMNI', auditMsg);
     refreshUser();
     showToast('success', toastMsg);
   };
@@ -143,10 +169,10 @@ export const AlumniProfilePage: React.FC = () => {
         maxHeight: 400,
         quality: 0.85,
       });
-      persistAvatar(
+      await persistAvatar(
         compressedDataUrl,
         'Mengunggah dan mengganti foto profil pribadi',
-        'Foto profil berhasil diganti dan langsung tersimpan!'
+        'Foto profil berhasil diganti dan tersimpan permanen!'
       );
     } catch {
       showToast('error', 'Gagal memproses berkas gambar');
@@ -156,34 +182,55 @@ export const AlumniProfilePage: React.FC = () => {
     }
   };
 
-  const handleApplyPhotoUrl = () => {
+  const handleApplyPhotoUrl = async () => {
     if (!photoUrlInput.trim()) {
       showToast('error', 'Masukkan URL foto terlebih dahulu');
       return;
     }
-    persistAvatar(
-      photoUrlInput.trim(),
-      'Mengubah foto profil pribadi via tautan URL',
-      'Foto profil dari tautan berhasil diganti dan langsung tersimpan!'
-    );
-    setPhotoUrlInput('');
-    setShowUrlInput(false);
+    setIsUploadingPhoto(true);
+    try {
+      await persistAvatar(
+        photoUrlInput.trim(),
+        'Mengubah foto profil pribadi via tautan URL',
+        'Foto profil dari tautan berhasil diganti dan tersimpan permanen!'
+      );
+      setPhotoUrlInput('');
+      setShowUrlInput(false);
+    } finally {
+      setIsUploadingPhoto(false);
+    }
   };
 
-  const handleRemovePhoto = () => {
-    persistAvatar(
-      '',
-      'Menghapus foto profil pribadi',
-      'Foto profil telah dihapus dan tersimpan'
-    );
+  const handleRemovePhoto = async () => {
+    setIsUploadingPhoto(true);
+    try {
+      await persistAvatar(
+        '',
+        'Menghapus foto profil pribadi',
+        'Foto profil telah dihapus dan tersimpan'
+      );
+    } finally {
+      setIsUploadingPhoto(false);
+    }
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    StorageService.saveAlumni(profile);
-    StorageService.addAuditLog(user?.name || profile.name, 'ALUMNI', 'Memperbarui profil karir dan foto pribadi');
-    showToast('success', 'Profil karir dan foto Anda berhasil disimpan!');
-    reloadData();
+    setIsSavingProfile(true);
+    try {
+      const res = await StorageService.saveAlumniAsync(profile);
+      if (!res.ok) {
+        showToast('error', res.error || 'Gagal menyimpan perubahan profil ke database');
+        return;
+      }
+      isDirtyRef.current = false;
+      setProfile(res.data);
+      StorageService.addAuditLog(user?.name || res.data.name, 'ALUMNI', 'Memperbarui profil karir dan foto pribadi');
+      showToast('success', 'Profil karir dan foto Anda berhasil disimpan ke database!');
+      refreshUser();
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   const handleAddCareerHistory = (e: React.FormEvent) => {
@@ -281,7 +328,7 @@ export const AlumniProfilePage: React.FC = () => {
                     <div className="w-24 h-24 rounded-2xl overflow-hidden ring-4 ring-white shadow-md bg-gradient-to-br from-emerald-600 to-slate-800 flex items-center justify-center">
                       {profile.avatar && !photoImgError ? (
                         <img
-                          src={profile.avatar}
+                          src={resolveAssetUrl(profile.avatar)}
                           alt={profile.name}
                           className="w-full h-full object-cover"
                           onError={() => setPhotoImgError(true)}
@@ -729,10 +776,11 @@ export const AlumniProfilePage: React.FC = () => {
             <div className="flex justify-end pt-2">
               <button
                 type="submit"
-                className="px-6 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs shadow-xs transition-colors flex items-center gap-2"
+                disabled={isSavingProfile}
+                className="px-6 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-semibold text-xs shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
               >
                 <Save className="w-4 h-4" />
-                <span>Simpan Perubahan Profil</span>
+                <span>{isSavingProfile ? 'Menyimpan...' : 'Simpan Perubahan Profil'}</span>
               </button>
             </div>
           </form>

@@ -39,6 +39,7 @@ export const ImportAlumniPage: React.FC<ImportAlumniPageProps> = ({ onNavigate }
   const [file, setFile] = useState<File | null>(null);
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [isSuccessImported, setIsSuccessImported] = useState(false);
 
   // Template Download
@@ -182,41 +183,55 @@ export const ImportAlumniPage: React.FC<ImportAlumniPageProps> = ({ onNavigate }
     }));
   };
 
-  const handleCommitImport = () => {
+  const handleCommitImport = async () => {
     const validRows = parsedRows.filter(r => r.isValid);
     if (validRows.length === 0) {
       showToast('error', 'Tidak ada data valid yang dapat diimpor');
       return;
     }
 
-    const currentList = StorageService.getAlumniList();
-    let maxId = currentList.length > 0 ? Math.max(...currentList.map(a => a.id)) : 0;
+    const payload: Partial<AlumniProfile>[] = validRows.map((row) => ({
+      name: row.nama,
+      nisn: row.nisn,
+      angkatan: row.angkatan,
+      jurusan: row.jurusan,
+      email: row.email || `${row.nisn}@alumni.sch.id`,
+      phone: '0812-0000-0000',
+      domisili: row.domisili,
+      status_karir: row.status_karir as CareerStatus,
+      status_tracer: 'Belum Mengisi',
+      privacy_setting: 'PUBLIC',
+      avatar:
+        row.nama.toLowerCase().includes('siti') ||
+        row.nama.toLowerCase().includes('putri') ||
+        row.nama.toLowerCase().includes('rahayu') ||
+        row.nama.toLowerCase().includes('anisa') ||
+        row.nama.toLowerCase().includes('dewi') ||
+        row.nama.toLowerCase().includes('zahra')
+          ? AVATAR_CEWE
+          : AVATAR_COWO,
+    }));
 
-    validRows.forEach(row => {
-      maxId++;
-      const newAlumni: AlumniProfile = {
-        id: maxId,
-        user_id: Math.floor(Math.random() * 9000) + 1000,
-        name: row.nama,
-        nisn: row.nisn,
-        angkatan: row.angkatan,
-        jurusan: row.jurusan,
-        email: row.email || `${row.nisn}@alumni.sch.id`,
-        phone: '0812-0000-0000',
-        domisili: row.domisili,
-        status_karir: row.status_karir as CareerStatus,
-        status_tracer: 'Belum Mengisi',
-        privacy_setting: 'PUBLIC',
-        created_at: new Date().toISOString().split('T')[0],
-        updated_at: new Date().toISOString().split('T')[0],
-        avatar: (row.nama.toLowerCase().includes('siti') || row.nama.toLowerCase().includes('putri') || row.nama.toLowerCase().includes('rahayu') || row.nama.toLowerCase().includes('anisa') || row.nama.toLowerCase().includes('dewi') || row.nama.toLowerCase().includes('zahra')) ? AVATAR_CEWE : AVATAR_COWO
-      };
-      StorageService.saveAlumni(newAlumni);
-    });
-
-    StorageService.addAuditLog('Admin', 'ADMIN', `Import massal data alumni: berhasil menyimpan ${validRows.length} data`);
-    setIsSuccessImported(true);
-    showToast('success', `${validRows.length} data alumni berhasil disimpan! Seluruh akun login alumni telah otomatis dibuat.`);
+    setIsImporting(true);
+    try {
+      const res = await StorageService.importAlumniBatchAsync(payload);
+      if (!res.ok) {
+        showToast('error', res.error || 'Gagal mengimpor data alumni ke database');
+        return;
+      }
+      StorageService.addAuditLog(
+        'Admin',
+        'ADMIN',
+        `Import massal data alumni: berhasil menyimpan ${res.importedCount} data`
+      );
+      setIsSuccessImported(true);
+      showToast(
+        'success',
+        `${res.importedCount} data alumni berhasil disimpan permanen ke database!`
+      );
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const errorCount = parsedRows.filter(r => !r.isValid).length;
@@ -311,11 +326,17 @@ export const ImportAlumniPage: React.FC<ImportAlumniPageProps> = ({ onNavigate }
               </button>
               <button
                 onClick={handleCommitImport}
-                disabled={validCount === 0 || isSuccessImported}
-                className="px-5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold shadow-xs flex items-center gap-2 transition-colors"
+                disabled={validCount === 0 || isSuccessImported || isImporting}
+                className="px-5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold shadow-xs flex items-center gap-2 transition-colors cursor-pointer"
               >
                 {isSuccessImported ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-                <span>{isSuccessImported ? 'Data Selesai Diimpor!' : `Import ${validCount} Data Valid`}</span>
+                <span>
+                  {isImporting
+                    ? 'Mengimpor ke Database...'
+                    : isSuccessImported
+                      ? 'Data Selesai Diimpor!'
+                      : `Import ${validCount} Data Valid`}
+                </span>
               </button>
             </div>
           </div>

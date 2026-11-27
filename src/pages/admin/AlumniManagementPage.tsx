@@ -32,6 +32,7 @@ import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { Pagination } from '../../components/common/Pagination';
 import { useNotification } from '../../contexts/NotificationContext';
 import { AVATAR_COWO } from '../../constants/avatars';
+import { resolveAssetUrl } from '../../constants/assets';
 import { compressImageFile } from '../../utils/imageUtils';
 
 interface AlumniManagementPageProps {
@@ -40,7 +41,8 @@ interface AlumniManagementPageProps {
 
 export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNavigate }) => {
   const { showToast } = useNotification();
-  const schoolSettings = StorageService.getSchoolSettings();
+  const [schoolSettings, setSchoolSettings] = useState(StorageService.getSchoolSettings());
+  const [isSaving, setIsSaving] = useState(false);
 
   const [alumniList, setAlumniList] = useState<AlumniProfile[]>(StorageService.getAlumniList());
   const [usersList, setUsersList] = useState<User[]>(StorageService.getUsers());
@@ -100,6 +102,7 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
     const handleUpdate = () => {
       setAlumniList(StorageService.getAlumniList());
       setUsersList(StorageService.getUsers());
+      setSchoolSettings(StorageService.getSchoolSettings());
     };
 
     window.addEventListener('alumnitrack_data_changed', handleUpdate);
@@ -211,27 +214,35 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
       e.target.value = '';
       return;
     }
+    setIsSaving(true);
     try {
       const compressed = await compressImageFile(file, {
         maxWidth: 400,
         maxHeight: 400,
         quality: 0.85,
       });
-      setFormData(prev => ({ ...prev, avatar: compressed }));
       if (editingAlumni) {
         const updatedImmediate: AlumniProfile = {
           ...editingAlumni,
           avatar: compressed,
           updated_at: new Date().toISOString().split('T')[0],
         };
-        StorageService.saveAlumni(updatedImmediate);
-        setEditingAlumni(updatedImmediate);
+        const res = await StorageService.saveAlumniAsync(updatedImmediate);
+        if (!res.ok) {
+          showToast('error', res.error || 'Gagal menyimpan foto alumni ke database');
+          return;
+        }
+        setFormData(prev => ({ ...prev, avatar: res.data.avatar ?? compressed }));
+        setEditingAlumni(res.data);
         reloadData();
+      } else {
+        setFormData(prev => ({ ...prev, avatar: compressed }));
       }
-      showToast('success', 'Foto profil alumni berhasil diganti dan langsung tersimpan!');
+      showToast('success', 'Foto profil alumni berhasil diganti dan tersimpan!');
     } catch {
       showToast('error', 'Gagal memproses berkas gambar');
     } finally {
+      setIsSaving(false);
       e.target.value = '';
     }
   };
@@ -246,22 +257,25 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
   };
 
   const handleToggleAccountActive = (user: User) => {
-    const nextStatus = !user.isActive;
-    const users = StorageService.getUsers();
-    const idx = users.findIndex(u => u.id === user.id);
-    if (idx >= 0) {
-      users[idx].isActive = nextStatus;
-      localStorage.setItem('alumnitrack_users', JSON.stringify(users));
-      StorageService.addAuditLog('Admin', 'ADMIN', `Mengubah status akun ${user.name} menjadi ${nextStatus ? 'Aktif' : 'Nonaktif/Suspended'}`);
-      showToast('info', `Status akun ${user.name} berhasil diubah menjadi: ${nextStatus ? 'Aktif' : 'Nonaktif'}`);
+    const updatedUser = StorageService.toggleUserActive(user.id);
+    if (updatedUser) {
+      StorageService.addAuditLog(
+        'Admin',
+        'ADMIN',
+        `Mengubah status akun ${updatedUser.name} menjadi ${updatedUser.isActive ? 'Aktif' : 'Nonaktif/Suspended'}`
+      );
+      showToast(
+        'info',
+        `Status akun ${updatedUser.name} berhasil diubah menjadi: ${updatedUser.isActive ? 'Aktif' : 'Nonaktif'}`
+      );
       reloadData();
       if (selectedAlumniStatus) {
-        setSelectedAlumniStatus({ ...selectedAlumniStatus, user: users[idx] });
+        setSelectedAlumniStatus({ ...selectedAlumniStatus, user: updatedUser });
       }
     }
   };
 
-  const handleSaveAlumni = (e: React.FormEvent) => {
+  const handleSaveAlumni = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAlumni) return;
 
@@ -292,12 +306,20 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
       updated_at: new Date().toISOString().split('T')[0]
     };
 
-    StorageService.saveAlumni(updated);
-    StorageService.addAuditLog('Admin', 'ADMIN', `Verifikasi data profil alumni: ${updated.name} (${updated.nisn})`);
-    showToast('success', `Data alumni ${updated.name} berhasil diperbarui.`);
-
-    setIsEditModalOpen(false);
-    reloadData();
+    setIsSaving(true);
+    try {
+      const res = await StorageService.saveAlumniAsync(updated);
+      if (!res.ok) {
+        showToast('error', res.error || 'Gagal menyimpan perubahan data alumni ke database');
+        return;
+      }
+      StorageService.addAuditLog('Admin', 'ADMIN', `Verifikasi data profil alumni: ${res.data.name} (${res.data.nisn})`);
+      showToast('success', `Data alumni ${res.data.name} berhasil diperbarui dan tersimpan.`);
+      setIsEditModalOpen(false);
+      reloadData();
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleConfirmDelete = () => {
@@ -612,7 +634,7 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
                       <td className="py-3 px-2 text-center text-slate-400 font-mono tabular-nums">{rowNumber}</td>
                       <td className="py-3 px-3">
                         <img
-                          src={alumni.avatar || AVATAR_COWO}
+                          src={resolveAssetUrl(alumni.avatar, AVATAR_COWO)}
                           alt={alumni.name}
                           className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200"
                         />
@@ -807,7 +829,7 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-4">
               <div className="w-14 h-14 rounded-xl overflow-hidden bg-gradient-to-br from-emerald-700 to-slate-800 text-white flex items-center justify-center shrink-0 ring-2 ring-white shadow-xs">
                 {formData.avatar ? (
-                  <img src={formData.avatar} alt={formData.name} className="w-full h-full object-cover" />
+                  <img src={resolveAssetUrl(formData.avatar)} alt={formData.name} className="w-full h-full object-cover" />
                 ) : (
                   <span className="text-sm font-bold uppercase">{(formData.name || 'AL').substring(0, 2)}</span>
                 )}
@@ -817,10 +839,11 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
                 <div className="flex flex-wrap items-center gap-2">
                   <label className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold flex items-center gap-1.5 cursor-pointer">
                     <UploadCloud className="w-3.5 h-3.5" />
-                    <span>Ganti Foto</span>
+                    <span>{isSaving ? 'Menyimpan...' : 'Ganti Foto'}</span>
                     <input
                       type="file"
                       accept="image/*"
+                      disabled={isSaving}
                       onChange={handleAdminAlumniPhotoUpload}
                       className="hidden"
                     />
@@ -828,21 +851,31 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
                   {formData.avatar && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setFormData(prev => ({ ...prev, avatar: '' }));
-                        if (editingAlumni) {
-                          const updatedImmediate: AlumniProfile = {
-                            ...editingAlumni,
-                            avatar: '',
-                            updated_at: new Date().toISOString().split('T')[0],
-                          };
-                          StorageService.saveAlumni(updatedImmediate);
-                          setEditingAlumni(updatedImmediate);
-                          reloadData();
+                      disabled={isSaving}
+                      onClick={async () => {
+                        setIsSaving(true);
+                        try {
+                          if (editingAlumni) {
+                            const updatedImmediate: AlumniProfile = {
+                              ...editingAlumni,
+                              avatar: '',
+                              updated_at: new Date().toISOString().split('T')[0],
+                            };
+                            const res = await StorageService.saveAlumniAsync(updatedImmediate);
+                            if (!res.ok) {
+                              showToast('error', res.error || 'Gagal menghapus foto profil alumni');
+                              return;
+                            }
+                            setEditingAlumni(res.data);
+                            reloadData();
+                          }
+                          setFormData(prev => ({ ...prev, avatar: '' }));
+                          showToast('info', 'Foto profil alumni dihapus dan tersimpan');
+                        } finally {
+                          setIsSaving(false);
                         }
-                        showToast('info', 'Foto profil alumni dihapus dan tersimpan');
                       }}
-                      className="px-2.5 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 font-semibold cursor-pointer flex items-center gap-1"
+                      className="px-2.5 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 disabled:opacity-60 font-semibold cursor-pointer flex items-center gap-1"
                     >
                       <Camera className="w-3.5 h-3.5" />
                       <span>Hapus Foto</span>
@@ -966,9 +999,10 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-xs font-semibold text-white shadow-xs cursor-pointer"
+                disabled={isSaving}
+                className="px-5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-xs font-semibold text-white shadow-xs cursor-pointer"
               >
-                Simpan Perubahan
+                {isSaving ? 'Menyimpan...' : 'Simpan Perubahan'}
               </button>
             </div>
           </form>

@@ -58,6 +58,7 @@ export const ReportsPage: React.FC = () => {
   const [editingBk, setEditingBk] = useState<GuruBkProfile | null>(null);
   const [bkToDelete, setBkToDelete] = useState<GuruBkProfile | null>(null);
   const [isBkDeleteOpen, setIsBkDeleteOpen] = useState(false);
+  const [isSavingBk, setIsSavingBk] = useState(false);
   const bkPhotoInputRef = useRef<HTMLInputElement>(null);
 
   const [bkForm, setBkForm] = useState({
@@ -206,51 +207,66 @@ export const ReportsPage: React.FC = () => {
       e.target.value = '';
       return;
     }
+    setIsSavingBk(true);
     try {
       const compressed = await compressImageFile(file, {
         maxWidth: 400,
         maxHeight: 400,
         quality: 0.85,
       });
-      StorageService.saveGuruBkProfile({
+      const res = await StorageService.saveGuruBkProfileAsync({
         ...bk,
         avatar: compressed,
       });
+      if (!res.ok) {
+        showToast('error', res.error || 'Gagal menyimpan foto profil Guru BK ke database');
+        return;
+      }
       StorageService.addAuditLog('Admin', 'ADMIN', `Mengganti foto profil Guru BK: ${bk.name}`);
       setGuruBkList(StorageService.getGuruBkProfiles());
       showToast('success', `Foto profil ${bk.name} berhasil diganti dan tersimpan!`);
     } catch {
       showToast('error', 'Gagal memproses berkas gambar');
     } finally {
+      setIsSavingBk(false);
       e.target.value = '';
     }
   };
 
-  const handleSaveBk = (e: React.FormEvent) => {
+  const handleSaveBk = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bkForm.name.trim()) {
       showToast('error', 'Nama Guru BK wajib diisi');
       return;
     }
-    StorageService.saveGuruBkProfile({
-      id: editingBk?.id,
-      name: bkForm.name.trim(),
-      nip: bkForm.nip.trim(),
-      title: bkForm.title.trim() || 'Guru Bimbingan Konseling / BKK',
-      email: bkForm.email.trim(),
-      phone: bkForm.phone.trim(),
-      city: bkForm.city.trim() || 'Jakarta',
-      avatar: bkForm.avatar,
-      is_default: bkForm.is_default
-    });
-    StorageService.addAuditLog(
-      'Admin',
-      'ADMIN',
-      `${editingBk ? 'Memperbarui' : 'Menambahkan'} profil Guru BK: ${bkForm.name.trim()}`
-    );
-    showToast('success', `Profil Guru BK ${bkForm.name.trim()} berhasil ${editingBk ? 'diperbarui' : 'ditambahkan'}`);
-    setGuruBkList(StorageService.getGuruBkProfiles());
-    setIsBkModalOpen(false);
+    setIsSavingBk(true);
+    try {
+      const res = await StorageService.saveGuruBkProfileAsync({
+        id: editingBk?.id,
+        name: bkForm.name.trim(),
+        nip: bkForm.nip.trim(),
+        title: bkForm.title.trim() || 'Guru Bimbingan Konseling / BKK',
+        email: bkForm.email.trim(),
+        phone: bkForm.phone.trim(),
+        city: bkForm.city.trim() || 'Jakarta',
+        avatar: bkForm.avatar,
+        is_default: bkForm.is_default
+      });
+      if (!res.ok) {
+        showToast('error', res.error || 'Gagal menyimpan profil Guru BK ke database');
+        return;
+      }
+      StorageService.addAuditLog(
+        'Admin',
+        'ADMIN',
+        `${editingBk ? 'Memperbarui' : 'Menambahkan'} profil Guru BK: ${bkForm.name.trim()}`
+      );
+      showToast('success', `Profil Guru BK ${bkForm.name.trim()} berhasil ${editingBk ? 'diperbarui' : 'ditambahkan'}`);
+      setGuruBkList(StorageService.getGuruBkProfiles());
+      setIsBkModalOpen(false);
+    } finally {
+      setIsSavingBk(false);
+    }
   };
 
   const handleSetDefaultBk = (bk: GuruBkProfile) => {
@@ -854,9 +870,10 @@ export const ReportsPage: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 font-semibold text-white shadow-xs cursor-pointer"
+              disabled={isSavingBk}
+              className="px-5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 font-semibold text-white shadow-xs cursor-pointer"
             >
-              {editingBk ? 'Simpan Perubahan' : 'Tambahkan Profil'}
+              {isSavingBk ? 'Menyimpan...' : editingBk ? 'Simpan Perubahan' : 'Tambahkan Profil'}
             </button>
           </div>
         </form>
