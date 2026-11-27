@@ -1,8 +1,6 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { Pool } from 'pg';
-import { resolveAssetUrl } from '../constants/assets.ts';
 import {
   User,
   AlumniProfile,
@@ -55,9 +53,7 @@ export interface DatabaseState {
   emailLogs: EmailNotificationLog[];
 }
 
-const LOCAL_DB_PATH = process.env.VERCEL
-  ? path.join(os.tmpdir(), '.alumnitrack-db.json')
-  : path.join(process.cwd(), '.alumnitrack-db.json');
+const LOCAL_DB_PATH = path.join(process.cwd(), '.alumnitrack-db.json');
 
 declare global {
   var _neonPgPool: Pool | undefined;
@@ -84,41 +80,6 @@ function getPool(): Pool | null {
 
 export function isNeonConfigured(): boolean {
   return Boolean(process.env.DATABASE_URL?.trim());
-}
-
-export function isEphemeralStore(): boolean {
-  return !isNeonConfigured() && Boolean(process.env.VERCEL);
-}
-
-function normalizeStateAssets(state: DatabaseState): DatabaseState {
-  return {
-    ...state,
-    settings: {
-      ...INITIAL_SCHOOL_SETTINGS,
-      ...state.settings,
-      logo: resolveAssetUrl(state.settings?.logo, INITIAL_SCHOOL_SETTINGS.logo),
-      landing_hero_image: resolveAssetUrl(
-        state.settings?.landing_hero_image,
-        INITIAL_SCHOOL_SETTINGS.landing_hero_image || ''
-      ),
-    },
-    users: (state.users || []).map((u) => ({
-      ...u,
-      avatar: u.avatar ? resolveAssetUrl(u.avatar) : u.avatar,
-    })),
-    profiles: (state.profiles || []).map((p) => ({
-      ...p,
-      avatar: p.avatar ? resolveAssetUrl(p.avatar) : p.avatar,
-    })),
-    forum: (state.forum || []).map((f) => ({
-      ...f,
-      author_avatar: f.author_avatar ? resolveAssetUrl(f.author_avatar) : f.author_avatar,
-      comments: (f.comments || []).map((c) => ({
-        ...c,
-        author_avatar: c.author_avatar ? resolveAssetUrl(c.author_avatar) : c.author_avatar,
-      })),
-    })),
-  };
 }
 
 function sanitizeInitialUsers(): StoredUser[] {
@@ -176,11 +137,11 @@ function readLocalState(): DatabaseState {
     if (fs.existsSync(LOCAL_DB_PATH)) {
       const raw = fs.readFileSync(LOCAL_DB_PATH, 'utf-8');
       const parsed = JSON.parse(raw) as Partial<DatabaseState>;
-      localStateCache = normalizeStateAssets({
+      localStateCache = {
         ...createInitialState(),
         ...parsed,
         settings: parsed.settings || { ...INITIAL_SCHOOL_SETTINGS },
-      });
+      };
       return localStateCache;
     }
   } catch (err) {
@@ -193,13 +154,9 @@ function readLocalState(): DatabaseState {
 
 function writeLocalState(state: DatabaseState): void {
   localStateCache = state;
-  try {
-    const tmpPath = `${LOCAL_DB_PATH}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
-    fs.renameSync(tmpPath, LOCAL_DB_PATH);
-  } catch (err) {
-    console.error('Failed to persist local state to disk:', err);
-  }
+  const tmpPath = `${LOCAL_DB_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, LOCAL_DB_PATH);
 }
 
 async function ensurePgInitialized(pool: Pool): Promise<void> {
@@ -420,6 +377,23 @@ async function ensurePgInitialized(pool: Pool): Promise<void> {
       await pool.query(
         `INSERT INTO at_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
         ['seeded_v1', new Date().toISOString()]
+      );
+    }
+
+    const cleanupCheck = await pool.query(`SELECT value FROM at_meta WHERE key = $1`, [
+      'cleanup_smoke_and_seed14_v1',
+    ]);
+    if (cleanupCheck.rows.length === 0) {
+      await pool.query(`UPDATE at_users SET password_hash = NULL WHERE id IN (1, 2)`);
+      await pool.query(
+        `DELETE FROM at_alumni_profiles WHERE user_id = 14 AND LOWER(email) = 'alzahraa7842@gmail.com'`
+      );
+      await pool.query(
+        `DELETE FROM at_users WHERE id = 14 AND LOWER(email) = 'alzahraa7842@gmail.com' AND password_hash IS NULL`
+      );
+      await pool.query(
+        `INSERT INTO at_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        ['cleanup_smoke_and_seed14_v1', new Date().toISOString()]
       );
     }
     pgSchemaReady = true;
@@ -810,7 +784,7 @@ async function readPgState(pool: Pool): Promise<DatabaseState> {
 export async function getDbState(): Promise<DatabaseState> {
   const pool = getPool();
   if (pool) {
-    return normalizeStateAssets(await readPgState(pool));
+    return readPgState(pool);
   }
   return readLocalState();
 }

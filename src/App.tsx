@@ -51,11 +51,17 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  const navigate = (path: string) => {
+  const navigate = React.useCallback((path: string) => {
     setCurrentPath(path);
     window.history.pushState({}, '', path);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated && user && (currentPath === '/login' || currentPath === '/register')) {
+      navigate(user.role === 'ADMIN' ? '/admin/dashboard' : '/alumni/dashboard');
+    }
+  }, [isAuthenticated, user, currentPath, navigate]);
 
   if (isLoading) {
     return (
@@ -78,24 +84,13 @@ function AppContent() {
   // 2. Login & Register Pages
   if (currentPath === '/register') {
     if (isAuthenticated && user) {
-      if (user.role === 'ADMIN') {
-        navigate('/admin/dashboard');
-      } else {
-        navigate('/alumni/dashboard');
-      }
       return null;
     }
     return <RegisterPage onNavigate={navigate} />;
   }
 
   if (currentPath === '/login') {
-    // If already logged in, redirect by role
     if (isAuthenticated && user) {
-      if (user.role === 'ADMIN') {
-        navigate('/admin/dashboard');
-      } else {
-        navigate('/alumni/dashboard');
-      }
       return null;
     }
     return <LoginPage onNavigate={navigate} />;

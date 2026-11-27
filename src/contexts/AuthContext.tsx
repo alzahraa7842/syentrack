@@ -3,7 +3,6 @@ import { User, AlumniProfile, UserRole } from '../types';
 import {
   StorageService,
   setAuthToken,
-  getAuthToken,
   startAuthenticatedListeners,
   stopAuthenticatedListeners,
 } from '../services/storageService';
@@ -25,6 +24,7 @@ interface AuthResult {
   success: boolean;
   message: string;
   role?: UserRole;
+  code?: string;
 }
 
 interface AuthContextType {
@@ -33,8 +33,10 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isSubmitting: boolean;
   needsAdminBootstrap: boolean;
   bootstrapAdmin: (password: string) => Promise<AuthResult>;
+  activateAlumni: (identifier: string, password: string) => Promise<AuthResult>;
   login: (identifier: string, password: string, rememberMe?: boolean) => Promise<AuthResult>;
   register: (data: RegisterPayload) => Promise<AuthResult>;
   logout: () => Promise<void>;
@@ -44,16 +46,11 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(() => StorageService.getCurrentUser());
-  const [alumniProfile, setAlumniProfile] = useState<AlumniProfile | null>(() => {
-    const initialUser = StorageService.getCurrentUser();
-    if (!initialUser || initialUser.role !== 'ALUMNI') return null;
-    return (
-      StorageService.getAlumniByUserId(initialUser.id, initialUser.email, initialUser.nisn) || null
-    );
-  });
-  const [token, setToken] = useState<string | null>(() => getAuthToken());
-  const [isLoading, setIsLoading] = useState<boolean>(() => !(getAuthToken() && StorageService.getCurrentUser()));
+  const [user, setUser] = useState<User | null>(null);
+  const [alumniProfile, setAlumniProfile] = useState<AlumniProfile | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [needsAdminBootstrap, setNeedsAdminBootstrap] = useState<boolean>(false);
 
   const syncCachedProfile = useCallback((currentUser: User | null) => {
@@ -77,60 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let active = true;
-
-    const bootstrapSession = async () => {
-      const savedToken = getAuthToken();
-      const savedUser = StorageService.getCurrentUser();
-
-      if (savedToken && savedUser) {
-        startAuthenticatedListeners(savedUser.id, savedUser.role);
-        try {
-          const meRes = await fetch('/api/auth/me', {
-            headers: { Authorization: `Bearer ${savedToken}` },
-          });
-          if (meRes.ok && active) {
-            const meData = await meRes.json();
-            const cachedLocalProfile =
-              meData.user?.role === 'ALUMNI'
-                ? StorageService.getAlumniByUserId(
-                    meData.user.id,
-                    meData.user.email,
-                    meData.user.nisn
-                  )
-                : null;
-            const resolvedProfile =
-              meData.persistent === false && cachedLocalProfile
-                ? cachedLocalProfile
-                : meData.alumniProfile || cachedLocalProfile || null;
-
-            const resolvedUser: User = resolvedProfile
-              ? {
-                  ...meData.user,
-                  name: resolvedProfile.name || meData.user.name,
-                  avatar:
-                    resolvedProfile.avatar !== undefined
-                      ? resolvedProfile.avatar
-                      : meData.user.avatar,
-                }
-              : meData.user;
-
-            StorageService.setCurrentUser(resolvedUser);
-            setUser(resolvedUser);
-            setAlumniProfile(resolvedProfile);
-          } else if (meRes.status === 401 && active) {
-            const errData = await meRes.json().catch(() => ({}));
-            if (!errData?.ephemeralMiss) {
-              stopAuthenticatedListeners();
-              setUser(null);
-              setAlumniProfile(null);
-              setToken(null);
-            }
-          }
-        } catch {
-          // Offline / static hosting fallback: keep restored local session
-        }
-      }
-
+    const checkInitialStatus = async () => {
       try {
         const res = await fetch('/api/auth/admin-status');
         if (res.ok && active) {
@@ -143,15 +87,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (active) setIsLoading(false);
       }
     };
-
-    void bootstrapSession();
+    void checkInitialStatus();
 
     const handleDataSync = () => {
       const cachedUser = StorageService.getCurrentUser();
-      const cachedToken = getAuthToken();
-      setToken(cachedToken);
-      setUser(cachedUser);
-      syncCachedProfile(cachedUser);
+      if (cachedUser) {
+        setUser(cachedUser);
+        syncCachedProfile(cachedUser);
+      }
     };
 
     window.addEventListener('alumnitrack_auth_changed', handleDataSync);
@@ -166,38 +109,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const applyAuthenticatedSession = (
     newToken: string,
     authUser: User,
-    profile: AlumniProfile | null,
-    rememberMe = true
+    profile: AlumniProfile | null
   ) => {
-    setAuthToken(newToken, rememberMe);
-    let finalProfile = profile;
-    if (authUser.role === 'ALUMNI' && profile) {
-      const localCached = StorageService.getAlumniById(profile.id);
-      if (localCached && !StorageService.isServerPersistent()) {
-        finalProfile = localCached;
-      } else {
-        finalProfile = profile;
-      }
-    }
-
-    const finalUser: User = finalProfile
-      ? {
-          ...authUser,
-          name: finalProfile.name || authUser.name,
-          avatar:
-            finalProfile.avatar !== undefined ? finalProfile.avatar : authUser.avatar,
-        }
-      : authUser;
-
-    StorageService.setCurrentUser(finalUser);
-    startAuthenticatedListeners(finalUser.id, finalUser.role);
+    setAuthToken(newToken);
+    StorageService.setCurrentUser(authUser);
+    startAuthenticatedListeners(authUser.id, authUser.role);
     setToken(newToken);
-    setUser(finalUser);
-    setAlumniProfile(finalProfile);
+    setUser(authUser);
+    setAlumniProfile(profile);
   };
 
   const bootstrapAdmin = async (password: string): Promise<AuthResult> => {
-    setIsLoading(true);
+    setIsSubmitting(true);
     try {
       const res = await fetch('/api/auth/bootstrap-admin', {
         method: 'POST',
@@ -206,35 +129,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setIsLoading(false);
+        setIsSubmitting(false);
         return { success: false, message: data.message || 'Gagal menetapkan password Admin.' };
       }
 
       setNeedsAdminBootstrap(false);
-      applyAuthenticatedSession(data.token, data.user, null, true);
+      applyAuthenticatedSession(data.token, data.user, null);
       StorageService.addAuditLog(data.user.name, data.user.role, 'Menetapkan password Admin awal & masuk sistem');
-      setIsLoading(false);
+      setIsSubmitting(false);
       return {
         success: true,
         message: data.message || 'Password Admin berhasil ditetapkan!',
         role: data.user.role,
       };
     } catch {
-      setIsLoading(false);
+      setIsSubmitting(false);
       return { success: false, message: 'Gagal menghubungi server.' };
     }
   };
 
-  const login = async (
-    identifier: string,
-    password: string,
-    rememberMe = true
-  ): Promise<AuthResult> => {
+  const activateAlumni = async (identifier: string, password: string): Promise<AuthResult> => {
+    setIsSubmitting(true);
+    try {
+      const res = await fetch('/api/auth/activate-alumni', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: identifier.trim(), password }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setIsSubmitting(false);
+        return { success: false, message: data.message || 'Gagal mengaktivasi akun alumni.' };
+      }
+
+      applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null);
+      StorageService.addAuditLog(data.user.name, data.user.role, 'Aktivasi password awal & login alumni');
+      setIsSubmitting(false);
+      return {
+        success: true,
+        message: data.message || 'Akun berhasil diaktivasi!',
+        role: data.user.role,
+      };
+    } catch {
+      setIsSubmitting(false);
+      return { success: false, message: 'Gagal terhubung ke server aktivasi.' };
+    }
+  };
+
+  const login = async (identifier: string, password: string): Promise<AuthResult> => {
     const cleanId = identifier.trim();
     if (!cleanId) return { success: false, message: 'Email atau NISN tidak boleh kosong.' };
     if (!password) return { success: false, message: 'Password tidak boleh kosong.' };
 
-    setIsLoading(true);
+    setIsSubmitting(true);
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
@@ -243,25 +190,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setIsLoading(false);
-        return { success: false, message: data.message || 'Gagal melakukan autentikasi.' };
+        setIsSubmitting(false);
+        return {
+          success: false,
+          code: data.code,
+          message: data.message || 'Gagal melakukan autentikasi.',
+        };
       }
 
-      applyAuthenticatedSession(
-        data.token,
-        data.user,
-        data.alumniProfile || null,
-        rememberMe
-      );
+      applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null);
       StorageService.addAuditLog(data.user.name, data.user.role, 'Login berhasil ke sistem');
-      setIsLoading(false);
+      setIsSubmitting(false);
       return {
         success: true,
         message: data.message || 'Login berhasil!',
         role: data.user.role,
       };
     } catch {
-      setIsLoading(false);
+      setIsSubmitting(false);
       return { success: false, message: 'Gagal terhubung ke server autentikasi.' };
     }
   };
@@ -275,7 +221,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Password minimal 6 karakter.' };
     }
 
-    setIsLoading(true);
+    setIsSubmitting(true);
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -288,24 +234,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setIsLoading(false);
-        return { success: false, message: data.message || 'Gagal mendaftarkan akun baru.' };
+        setIsSubmitting(false);
+        return {
+          success: false,
+          code: data.code,
+          message: data.message || 'Gagal mendaftarkan akun baru.',
+        };
       }
 
-      applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null, true);
+      applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null);
       StorageService.addAuditLog(
         data.user.name,
         data.user.role,
         'Mendaftar sebagai akun alumni baru'
       );
-      setIsLoading(false);
+      setIsSubmitting(false);
       return {
         success: true,
         message: data.message || 'Pendaftaran akun baru berhasil!',
         role: data.user.role,
       };
     } catch {
-      setIsLoading(false);
+      setIsSubmitting(false);
       return { success: false, message: 'Gagal terhubung ke server pendaftaran.' };
     }
   };
@@ -336,8 +286,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         token,
         isAuthenticated: !!user && !!token,
         isLoading,
+        isSubmitting,
         needsAdminBootstrap,
         bootstrapAdmin,
+        activateAlumni,
         login,
         register,
         logout,
