@@ -246,20 +246,17 @@ export const AlumniManagementPage: React.FC<AlumniManagementPageProps> = ({ onNa
   };
 
   const handleToggleAccountActive = (user: User) => {
-    const updatedUser = StorageService.toggleUserActive(user.id);
-    if (updatedUser) {
-      StorageService.addAuditLog(
-        'Admin',
-        'ADMIN',
-        `Mengubah status akun ${updatedUser.name} menjadi ${updatedUser.isActive ? 'Aktif' : 'Nonaktif/Suspended'}`
-      );
-      showToast(
-        'info',
-        `Status akun ${updatedUser.name} berhasil diubah menjadi: ${updatedUser.isActive ? 'Aktif' : 'Nonaktif'}`
-      );
+    const nextStatus = !user.isActive;
+    const users = StorageService.getUsers();
+    const idx = users.findIndex(u => u.id === user.id);
+    if (idx >= 0) {
+      users[idx].isActive = nextStatus;
+      localStorage.setItem('alumnitrack_users', JSON.stringify(users));
+      StorageService.addAuditLog('Admin', 'ADMIN', `Mengubah status akun ${user.name} menjadi ${nextStatus ? 'Aktif' : 'Nonaktif/Suspended'}`);
+      showToast('info', `Status akun ${user.name} berhasil diubah menjadi: ${nextStatus ? 'Aktif' : 'Nonaktif'}`);
       reloadData();
       if (selectedAlumniStatus) {
-        setSelectedAlumniStatus({ ...selectedAlumniStatus, user: updatedUser });
+        setSelectedAlumniStatus({ ...selectedAlumniStatus, user: users[idx] });
       }
     }
   };

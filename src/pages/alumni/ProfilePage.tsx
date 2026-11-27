@@ -29,7 +29,6 @@ import { Badge } from '../../components/common/Badge';
 import { Modal } from '../../components/common/Modal';
 import { useNotification } from '../../contexts/NotificationContext';
 import { compressImageFile } from '../../utils/imageUtils';
-import { resolveAssetUrl } from '../../constants/assets';
 
 export const AlumniProfilePage: React.FC = () => {
   const { user, alumniProfile, refreshUser } = useAuth();
@@ -39,7 +38,6 @@ export const AlumniProfilePage: React.FC = () => {
   const [photoUrlInput, setPhotoUrlInput] = useState('');
   const [photoImgError, setPhotoImgError] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
-  const isDirtyRef = useRef(false);
 
   // Primary active alumni data
   const currentAlumni: AlumniProfile = alumniProfile || 
@@ -58,7 +56,6 @@ export const AlumniProfilePage: React.FC = () => {
       status_karir: 'Bekerja',
       status_tracer: 'Belum Mengisi',
       privacy_setting: 'PUBLIC',
-      avatar: user?.avatar,
       updated_at: new Date().toISOString().split('T')[0],
       created_at: new Date().toISOString().split('T')[0],
     };
@@ -92,13 +89,6 @@ export const AlumniProfilePage: React.FC = () => {
     const sync = () => {
       setCareerHistories(StorageService.getCareerHistories(currentAlumni.id));
       setDocuments(StorageService.getDocuments(currentAlumni.id));
-      setProfile((prev) => {
-        if (prev.id === 999) {
-          const fresh = StorageService.getAlumniById(currentAlumni.id);
-          if (fresh) return { ...fresh };
-        }
-        return prev;
-      });
     };
     sync();
     window.addEventListener('alumnitrack_data_changed', sync);
@@ -106,17 +96,10 @@ export const AlumniProfilePage: React.FC = () => {
   }, [currentAlumni.id]);
 
   useEffect(() => {
-    if (!alumniProfile) return;
-    setProfile((prev) => {
-      if (prev.id === 999 && alumniProfile.id !== 999) {
-        return { ...alumniProfile };
-      }
-      if (!isDirtyRef.current && alumniProfile.id === prev.id && alumniProfile.avatar !== prev.avatar) {
-        return { ...prev, avatar: alumniProfile.avatar };
-      }
-      return prev;
-    });
-  }, [alumniProfile]);
+    if (alumniProfile && alumniProfile.id === profile.id && alumniProfile.avatar !== profile.avatar) {
+      setProfile(prev => ({ ...prev, avatar: alumniProfile.avatar }));
+    }
+  }, [alumniProfile?.avatar, alumniProfile?.id]);
 
   const reloadData = () => {
     const updated = StorageService.getAlumniById(currentAlumni.id);
@@ -197,10 +180,8 @@ export const AlumniProfilePage: React.FC = () => {
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    const saved = StorageService.saveAlumni(profile);
-    isDirtyRef.current = false;
-    setProfile(saved);
-    StorageService.addAuditLog(user?.name || saved.name, 'ALUMNI', 'Memperbarui profil karir dan foto pribadi');
+    StorageService.saveAlumni(profile);
+    StorageService.addAuditLog(user?.name || profile.name, 'ALUMNI', 'Memperbarui profil karir dan foto pribadi');
     showToast('success', 'Profil karir dan foto Anda berhasil disimpan!');
     reloadData();
   };
@@ -300,7 +281,7 @@ export const AlumniProfilePage: React.FC = () => {
                     <div className="w-24 h-24 rounded-2xl overflow-hidden ring-4 ring-white shadow-md bg-gradient-to-br from-emerald-600 to-slate-800 flex items-center justify-center">
                       {profile.avatar && !photoImgError ? (
                         <img
-                          src={resolveAssetUrl(profile.avatar)}
+                          src={profile.avatar}
                           alt={profile.name}
                           className="w-full h-full object-cover"
                           onError={() => setPhotoImgError(true)}

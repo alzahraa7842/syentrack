@@ -24,7 +24,6 @@ interface AuthResult {
   success: boolean;
   message: string;
   role?: UserRole;
-  code?: string;
 }
 
 interface AuthContextType {
@@ -33,10 +32,8 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  isSubmitting: boolean;
   needsAdminBootstrap: boolean;
   bootstrapAdmin: (password: string) => Promise<AuthResult>;
-  activateAlumni: (identifier: string, password: string) => Promise<AuthResult>;
   login: (identifier: string, password: string, rememberMe?: boolean) => Promise<AuthResult>;
   register: (data: RegisterPayload) => Promise<AuthResult>;
   logout: () => Promise<void>;
@@ -50,7 +47,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [alumniProfile, setAlumniProfile] = useState<AlumniProfile | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [needsAdminBootstrap, setNeedsAdminBootstrap] = useState<boolean>(false);
 
   const syncCachedProfile = useCallback((currentUser: User | null) => {
@@ -120,7 +116,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const bootstrapAdmin = async (password: string): Promise<AuthResult> => {
-    setIsSubmitting(true);
+    setIsLoading(true);
     try {
       const res = await fetch('/api/auth/bootstrap-admin', {
         method: 'POST',
@@ -129,50 +125,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setIsSubmitting(false);
+        setIsLoading(false);
         return { success: false, message: data.message || 'Gagal menetapkan password Admin.' };
       }
 
       setNeedsAdminBootstrap(false);
       applyAuthenticatedSession(data.token, data.user, null);
       StorageService.addAuditLog(data.user.name, data.user.role, 'Menetapkan password Admin awal & masuk sistem');
-      setIsSubmitting(false);
+      setIsLoading(false);
       return {
         success: true,
         message: data.message || 'Password Admin berhasil ditetapkan!',
         role: data.user.role,
       };
     } catch {
-      setIsSubmitting(false);
+      setIsLoading(false);
       return { success: false, message: 'Gagal menghubungi server.' };
-    }
-  };
-
-  const activateAlumni = async (identifier: string, password: string): Promise<AuthResult> => {
-    setIsSubmitting(true);
-    try {
-      const res = await fetch('/api/auth/activate-alumni', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: identifier.trim(), password }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setIsSubmitting(false);
-        return { success: false, message: data.message || 'Gagal mengaktivasi akun alumni.' };
-      }
-
-      applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null);
-      StorageService.addAuditLog(data.user.name, data.user.role, 'Aktivasi password awal & login alumni');
-      setIsSubmitting(false);
-      return {
-        success: true,
-        message: data.message || 'Akun berhasil diaktivasi!',
-        role: data.user.role,
-      };
-    } catch {
-      setIsSubmitting(false);
-      return { success: false, message: 'Gagal terhubung ke server aktivasi.' };
     }
   };
 
@@ -181,7 +149,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!cleanId) return { success: false, message: 'Email atau NISN tidak boleh kosong.' };
     if (!password) return { success: false, message: 'Password tidak boleh kosong.' };
 
-    setIsSubmitting(true);
+    setIsLoading(true);
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
@@ -190,24 +158,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setIsSubmitting(false);
-        return {
-          success: false,
-          code: data.code,
-          message: data.message || 'Gagal melakukan autentikasi.',
-        };
+        setIsLoading(false);
+        return { success: false, message: data.message || 'Gagal melakukan autentikasi.' };
       }
 
       applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null);
       StorageService.addAuditLog(data.user.name, data.user.role, 'Login berhasil ke sistem');
-      setIsSubmitting(false);
+      setIsLoading(false);
       return {
         success: true,
         message: data.message || 'Login berhasil!',
         role: data.user.role,
       };
     } catch {
-      setIsSubmitting(false);
+      setIsLoading(false);
       return { success: false, message: 'Gagal terhubung ke server autentikasi.' };
     }
   };
@@ -221,7 +185,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Password minimal 6 karakter.' };
     }
 
-    setIsSubmitting(true);
+    setIsLoading(true);
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -234,12 +198,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setIsSubmitting(false);
-        return {
-          success: false,
-          code: data.code,
-          message: data.message || 'Gagal mendaftarkan akun baru.',
-        };
+        setIsLoading(false);
+        return { success: false, message: data.message || 'Gagal mendaftarkan akun baru.' };
       }
 
       applyAuthenticatedSession(data.token, data.user, data.alumniProfile || null);
@@ -248,14 +208,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         data.user.role,
         'Mendaftar sebagai akun alumni baru'
       );
-      setIsSubmitting(false);
+      setIsLoading(false);
       return {
         success: true,
         message: data.message || 'Pendaftaran akun baru berhasil!',
         role: data.user.role,
       };
     } catch {
-      setIsSubmitting(false);
+      setIsLoading(false);
       return { success: false, message: 'Gagal terhubung ke server pendaftaran.' };
     }
   };
@@ -286,10 +246,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         token,
         isAuthenticated: !!user && !!token,
         isLoading,
-        isSubmitting,
         needsAdminBootstrap,
         bootstrapAdmin,
-        activateAlumni,
         login,
         register,
         logout,

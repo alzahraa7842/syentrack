@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { StorageService } from '../../services/storageService';
-import { DEFAULT_SCHOOL_LOGO, resolveAssetUrl } from '../../constants/assets';
 
 interface SidebarProps {
   currentPath: string;
@@ -35,13 +34,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { user, logout } = useAuth();
   const [schoolSettings, setSchoolSettings] = useState(StorageService.getSchoolSettings());
-  const [logoError, setLogoError] = useState(false);
 
   useEffect(() => {
-    const sync = () => {
-      setSchoolSettings(StorageService.getSchoolSettings());
-      setLogoError(false);
-    };
+    const sync = () => setSchoolSettings(StorageService.getSchoolSettings());
     window.addEventListener('alumnitrack_data_changed', sync);
     return () => window.removeEventListener('alumnitrack_data_changed', sync);
   }, []);
@@ -82,16 +77,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex items-center justify-between px-6 py-5 border-b border-slate-800">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center overflow-hidden shrink-0">
-            {!logoError ? (
-              <img
-                src={resolveAssetUrl(schoolSettings.logo, DEFAULT_SCHOOL_LOGO)}
-                alt="Logo Sekolah"
-                className="w-full h-full object-cover"
-                onError={() => setLogoError(true)}
-              />
-            ) : (
-              <GraduationCap className="w-5 h-5 text-emerald-400" />
-            )}
+            <img 
+              src={schoolSettings.logo} 
+              alt="Logo Sekolah" 
+              className="w-full h-full object-cover" 
+              onError={(e) => {
+                // Fallback SVG icon if file path is not rendered
+                (e.target as HTMLElement).style.display = 'none';
+              }} 
+            />
+            <GraduationCap className="w-5 h-5 text-emerald-400" />
           </div>
           <div>
             <span className="text-base font-bold text-white tracking-tight leading-none block">
@@ -147,7 +142,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex items-center gap-2.5 truncate">
             {user?.avatar ? (
               <img
-                src={resolveAssetUrl(user.avatar)}
+                src={user.avatar}
                 alt={user?.name || "User"}
                 className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-700"
                 referrerPolicy="no-referrer"

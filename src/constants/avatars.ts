@@ -1,7 +1,5 @@
-import { DEFAULT_AVATAR_COWO, DEFAULT_AVATAR_CEWE } from './assets';
-
-export const AVATAR_COWO = DEFAULT_AVATAR_COWO;
-export const AVATAR_CEWE = DEFAULT_AVATAR_CEWE;
+export const AVATAR_COWO = '/src/assets/images/avatar_cowo.svg';
+export const AVATAR_CEWE = '/src/assets/images/avatar_cewe.svg';
 
 export const AVATAR_OPTIONS = [
   {

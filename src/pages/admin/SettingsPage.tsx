@@ -17,7 +17,8 @@ import { StorageService } from '../../services/storageService';
 import { SchoolSettings } from '../../types';
 import { useNotification } from '../../contexts/NotificationContext';
 import { compressImageFile } from '../../utils/imageUtils';
-import { DEFAULT_HERO_IMAGE, resolveAssetUrl } from '../../constants/assets';
+
+const DEFAULT_HERO_IMAGE = '/src/assets/images/hero_alumni_careers_1790318409918.jpg';
 
 const HERO_PRESETS = [
   { label: 'Foto Default Sekolah', url: DEFAULT_HERO_IMAGE },
@@ -32,26 +33,16 @@ export const SettingsPage: React.FC = () => {
   const heroInputRef = useRef<HTMLInputElement>(null);
   const [heroUrlInput, setHeroUrlInput] = useState('');
   const [previewImgError, setPreviewImgError] = useState(false);
-  const isDirtyRef = useRef(false);
 
   // Broadcast state
   const [broadcastTitle, setBroadcastTitle] = useState('');
   const [broadcastMessage, setBroadcastMessage] = useState('');
 
   useEffect(() => {
-    const sync = () => {
-      if (!isDirtyRef.current) {
-        setSettings(StorageService.getSchoolSettings());
-      }
-    };
+    const sync = () => setSettings(StorageService.getSchoolSettings());
     window.addEventListener('alumnitrack_data_changed', sync);
     return () => window.removeEventListener('alumnitrack_data_changed', sync);
   }, []);
-
-  const updateSettingsField = (patch: Partial<SchoolSettings>) => {
-    isDirtyRef.current = true;
-    setSettings((prev) => ({ ...prev, ...patch }));
-  };
 
   const handleHeroPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -72,10 +63,10 @@ export const SettingsPage: React.FC = () => {
         maxHeight: 800,
         quality: 0.85,
       });
-      const saved = StorageService.saveSchoolSettings({ ...settings, landing_hero_image: compressed });
-      isDirtyRef.current = false;
-      setSettings(saved);
+      const updated = { ...settings, landing_hero_image: compressed };
+      setSettings(updated);
       setPreviewImgError(false);
+      StorageService.saveSchoolSettings(updated);
       StorageService.addAuditLog('Admin', 'ADMIN', 'Mengunggah dan memperbarui foto utama Landing Page');
       showToast('success', 'Foto Landing Page berhasil diubah dan langsung diterapkan!');
     } catch {
@@ -90,29 +81,27 @@ export const SettingsPage: React.FC = () => {
       showToast('error', 'Masukkan URL foto terlebih dahulu');
       return;
     }
-    const saved = StorageService.saveSchoolSettings({ ...settings, landing_hero_image: heroUrlInput.trim() });
-    isDirtyRef.current = false;
-    setSettings(saved);
+    const updated = { ...settings, landing_hero_image: heroUrlInput.trim() };
+    setSettings(updated);
     setPreviewImgError(false);
+    StorageService.saveSchoolSettings(updated);
     StorageService.addAuditLog('Admin', 'ADMIN', 'Mengubah URL foto utama Landing Page');
     showToast('success', 'Foto Landing Page berhasil diperbarui!');
     setHeroUrlInput('');
   };
 
   const handleSelectHeroPreset = (url: string) => {
-    const saved = StorageService.saveSchoolSettings({ ...settings, landing_hero_image: url });
-    isDirtyRef.current = false;
-    setSettings(saved);
+    const updated = { ...settings, landing_hero_image: url };
+    setSettings(updated);
     setPreviewImgError(false);
+    StorageService.saveSchoolSettings(updated);
     StorageService.addAuditLog('Admin', 'ADMIN', 'Mengubah foto utama Landing Page dari galeri preset');
     showToast('success', 'Foto Landing Page berhasil diganti!');
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    const saved = StorageService.saveSchoolSettings(settings);
-    isDirtyRef.current = false;
-    setSettings(saved);
+    StorageService.saveSchoolSettings(settings);
     StorageService.addAuditLog('Admin', 'ADMIN', 'Memperbarui profil sekolah, foto landing page, dan preferensi tracer study');
     showToast('success', 'Pengaturan sekolah & tampilan landing page berhasil disimpan');
   };
@@ -158,7 +147,7 @@ export const SettingsPage: React.FC = () => {
                     type="text"
                     required
                     value={settings.name}
-                    onChange={(e) => updateSettingsField({ name: e.target.value })}
+                    onChange={(e) => setSettings({ ...settings, name: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-600"
                   />
                 </div>
@@ -168,7 +157,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="text"
                     value={settings.npsn}
-                    onChange={(e) => updateSettingsField({ npsn: e.target.value })}
+                    onChange={(e) => setSettings({ ...settings, npsn: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono"
                   />
                 </div>
@@ -178,7 +167,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="text"
                     value={settings.academic_year}
-                    onChange={(e) => updateSettingsField({ academic_year: e.target.value })}
+                    onChange={(e) => setSettings({ ...settings, academic_year: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono"
                   />
                 </div>
@@ -188,7 +177,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="text"
                     value={settings.tagline}
-                    onChange={(e) => updateSettingsField({ tagline: e.target.value })}
+                    onChange={(e) => setSettings({ ...settings, tagline: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200"
                   />
                 </div>
@@ -198,7 +187,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="text"
                     value={settings.address}
-                    onChange={(e) => updateSettingsField({ address: e.target.value })}
+                    onChange={(e) => setSettings({ ...settings, address: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200"
                   />
                 </div>
@@ -208,7 +197,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="email"
                     value={settings.email}
-                    onChange={(e) => updateSettingsField({ email: e.target.value })}
+                    onChange={(e) => setSettings({ ...settings, email: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200"
                   />
                 </div>
@@ -218,7 +207,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="text"
                     value={settings.phone}
-                    onChange={(e) => updateSettingsField({ phone: e.target.value })}
+                    onChange={(e) => setSettings({ ...settings, phone: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200"
                   />
                 </div>
@@ -243,7 +232,7 @@ export const SettingsPage: React.FC = () => {
                   <div className="relative rounded-xl overflow-hidden shadow-md border border-slate-200 aspect-16/10 bg-slate-900">
                     {!previewImgError && (
                       <img
-                        src={resolveAssetUrl(settings.landing_hero_image, DEFAULT_HERO_IMAGE)}
+                        src={settings.landing_hero_image || DEFAULT_HERO_IMAGE}
                         alt="Pratinjau Hero Landing Page"
                         className="w-full h-full object-cover opacity-90"
                         onError={() => setPreviewImgError(true)}
@@ -319,7 +308,7 @@ export const SettingsPage: React.FC = () => {
                     <span className="block text-[11px] font-semibold text-slate-600 mb-1.5">Pilihan Cepat Galeri</span>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {HERO_PRESETS.map((preset) => {
-                        const isActive = resolveAssetUrl(settings.landing_hero_image, DEFAULT_HERO_IMAGE) === preset.url;
+                        const isActive = (settings.landing_hero_image || DEFAULT_HERO_IMAGE) === preset.url;
                         return (
                           <button
                             key={preset.label}
@@ -346,7 +335,7 @@ export const SettingsPage: React.FC = () => {
                     <input
                       type="text"
                       value={settings.landing_hero_caption || ''}
-                      onChange={(e) => updateSettingsField({ landing_hero_caption: e.target.value })}
+                      onChange={(e) => setSettings({ ...settings, landing_hero_caption: e.target.value })}
                       placeholder="Mewujudkan Lulusan Siap Kerja, Berdaya Saing & Berakhlak Mulia"
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-600"
                     />
@@ -366,7 +355,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={settings.reminder_7_days}
-                    onChange={(e) => updateSettingsField({ reminder_7_days: e.target.checked })}
+                    onChange={(e) => setSettings({ ...settings, reminder_7_days: e.target.checked })}
                     className="w-4 h-4 rounded text-emerald-700 focus:ring-emerald-600"
                   />
                   <div>
@@ -379,7 +368,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={settings.reminder_3_days}
-                    onChange={(e) => updateSettingsField({ reminder_3_days: e.target.checked })}
+                    onChange={(e) => setSettings({ ...settings, reminder_3_days: e.target.checked })}
                     className="w-4 h-4 rounded text-emerald-700 focus:ring-emerald-600"
                   />
                   <div>
@@ -392,7 +381,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={settings.reminder_1_day}
-                    onChange={(e) => updateSettingsField({ reminder_1_day: e.target.checked })}
+                    onChange={(e) => setSettings({ ...settings, reminder_1_day: e.target.checked })}
                     className="w-4 h-4 rounded text-emerald-700 focus:ring-emerald-600"
                   />
                   <div>

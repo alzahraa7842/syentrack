@@ -379,23 +379,6 @@ async function ensurePgInitialized(pool: Pool): Promise<void> {
         ['seeded_v1', new Date().toISOString()]
       );
     }
-
-    const cleanupCheck = await pool.query(`SELECT value FROM at_meta WHERE key = $1`, [
-      'cleanup_smoke_and_seed14_v1',
-    ]);
-    if (cleanupCheck.rows.length === 0) {
-      await pool.query(`UPDATE at_users SET password_hash = NULL WHERE id IN (1, 2)`);
-      await pool.query(
-        `DELETE FROM at_alumni_profiles WHERE user_id = 14 AND LOWER(email) = 'alzahraa7842@gmail.com'`
-      );
-      await pool.query(
-        `DELETE FROM at_users WHERE id = 14 AND LOWER(email) = 'alzahraa7842@gmail.com' AND password_hash IS NULL`
-      );
-      await pool.query(
-        `INSERT INTO at_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
-        ['cleanup_smoke_and_seed14_v1', new Date().toISOString()]
-      );
-    }
     pgSchemaReady = true;
   })();
 

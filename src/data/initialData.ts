@@ -179,6 +179,17 @@ export const INITIAL_USERS: User[] = [
     avatar: AVATAR_COWO,
     created_at: "2025-06-12 18:00:00",
     isActive: true,
+  },
+  {
+    id: 14,
+    name: "Alzahra",
+    email: "alzahraa7842@gmail.com",
+    nisn: "0058291999",
+    role: "ALUMNI",
+    avatar: AVATAR_CEWE,
+    created_at: "2025-06-15 10:00:00",
+    isActive: true,
+    password: "Alumni123!"
   }
 ];
 
@@ -448,6 +459,30 @@ export const INITIAL_ALUMNI_PROFILES: AlumniProfile[] = [
     job_location: "Jakarta Selatan",
     job_start_date: "2025-08-01",
     job_type: "Full-time",
+  },
+  {
+    id: 14,
+    user_id: 14,
+    name: "Alzahra",
+    nisn: "0058291999",
+    angkatan: 2025,
+    jurusan: "PPLG",
+    email: "alzahraa7842@gmail.com",
+    phone: "0812-9876-5432",
+    domisili: "Jakarta",
+    status_karir: "Bekerja",
+    status_tracer: "Sudah Mengisi",
+    avatar: AVATAR_CEWE,
+    privacy_setting: "PUBLIC",
+    updated_at: "2026-03-15",
+    created_at: "2025-06-15",
+    job_company: "PT Digital Solusi Indonesia",
+    job_position: "Web Developer",
+    job_industry: "Teknologi Informasi",
+    job_location: "Jakarta",
+    job_start_date: "2025-08-01",
+    job_type: "Full-time",
+    password: "Alumni123!"
   }
 ];
 

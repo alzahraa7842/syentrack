@@ -363,7 +363,6 @@ async function startServer() {
 
       let matchedUser = state.users.find(
         (u) =>
-          (lowerId === 'admin' && u.role === 'ADMIN') ||
           u.email.trim().toLowerCase() === lowerId ||
           (u.nisn && u.nisn.trim().toLowerCase() === lowerId)
       );
@@ -404,19 +403,17 @@ async function startServer() {
             return res.status(401).json({ success: false, message: 'Password Admin salah.' });
           }
         } else {
-          return res.status(409).json({
+          return res.status(401).json({
             success: false,
-            code: 'NEEDS_ADMIN_BOOTSTRAP',
-            message: 'Password Admin belum ditetapkan. Silakan tetapkan password Admin pada panel Aktivasi Admin di atas.',
+            message: 'Password Admin belum ditetapkan. Silakan lengkapi Setup Password Admin di halaman login.',
           });
         }
       } else {
         if (!matchedUser.password_hash) {
-          return res.status(409).json({
+          return res.status(401).json({
             success: false,
-            code: 'NEEDS_ALUMNI_ACTIVATION',
             message:
-              'Akun alumni ini belum diaktivasi dengan kata sandi. Klik tombol "Aktifkan & Masuk Sekarang" di bawah untuk menetapkan kata sandi Anda.',
+              'Akun contoh belum memiliki kata sandi. Silakan daftar akun baru melalui tab Daftar Akun Alumni Baru.',
           });
         }
         if (!verifyPassword(password, matchedUser.password_hash)) {
@@ -450,92 +447,6 @@ async function startServer() {
     }
   });
 
-  app.post('/api/auth/activate-alumni', async (req, res) => {
-    const identifier = typeof req.body?.identifier === 'string' ? req.body.identifier.trim().toLowerCase() : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-
-    if (!identifier) {
-      return res.status(400).json({ success: false, message: 'Email atau NISN wajib diisi.' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, message: 'Password minimal 6 karakter.' });
-    }
-
-    try {
-      const result = await mutateDb(async (state, pool) => {
-        let targetUser = state.users.find(
-          (u) =>
-            u.role === 'ALUMNI' &&
-            (u.email.trim().toLowerCase() === identifier ||
-              (u.nisn && u.nisn.trim().toLowerCase() === identifier))
-        );
-
-        if (!targetUser) {
-          const matchedProfile = state.profiles.find(
-            (p) =>
-              p.email.trim().toLowerCase() === identifier ||
-              p.nisn.trim().toLowerCase() === identifier
-          );
-          if (matchedProfile) {
-            targetUser = state.users.find((u) => u.id === matchedProfile.user_id && u.role === 'ALUMNI');
-          }
-        }
-
-        if (!targetUser) {
-          return { notFound: true as const };
-        }
-        if (!targetUser.isActive) {
-          return { inactive: true as const };
-        }
-        if (targetUser.password_hash) {
-          return { alreadyClaimed: true as const };
-        }
-
-        targetUser.password_hash = hashPassword(password);
-        targetUser.updated_at = new Date().toISOString();
-
-        if (pool) {
-          await pgOps.upsertUser(pool, targetUser);
-        }
-
-        const safeUser = toPublicUser(targetUser);
-        const profile = state.profiles.find((p) => p.user_id === safeUser.id) || null;
-        const token = signToken({
-          uid: safeUser.id,
-          role: safeUser.role,
-          email: safeUser.email,
-          exp: Date.now() + 24 * 60 * 60 * 1000,
-        });
-
-        return { token, user: safeUser, profile };
-      });
-
-      if ('notFound' in result) {
-        return res.status(404).json({ success: false, message: 'Akun alumni tidak ditemukan.' });
-      }
-      if ('inactive' in result) {
-        return res.status(403).json({ success: false, message: 'Akun Anda sedang dinonaktifkan.' });
-      }
-      if ('alreadyClaimed' in result) {
-        return res.status(409).json({
-          success: false,
-          message: 'Akun ini sudah memiliki kata sandi. Silakan masuk menggunakan kata sandi Anda.',
-        });
-      }
-
-      return res.json({
-        success: true,
-        message: `Akun diaktivasi! Selamat datang, ${result.user.name}.`,
-        token: result.token,
-        user: result.user,
-        alumniProfile: result.profile,
-      });
-    } catch (err) {
-      console.error('Activate alumni error:', err);
-      return res.status(500).json({ success: false, message: 'Gagal mengaktivasi akun alumni.' });
-    }
-  });
-
   app.post('/api/auth/register', async (req, res) => {
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
@@ -556,18 +467,9 @@ async function startServer() {
 
     try {
       const result = await mutateDb(async (state, pool) => {
-        const existingUser = state.users.find((u) => u.email.trim().toLowerCase() === email);
-        if (existingUser) {
-          if (existingUser.role === 'ALUMNI' && !existingUser.password_hash) {
-            return {
-              conflict:
-                'Email ini sudah terdaftar sebagai data alumni sekolah yang belum diaktivasi. Klik tombol di bawah untuk mengaktivasi akun dengan password Anda.',
-              code: 'NEEDS_ALUMNI_ACTIVATION',
-            };
-          }
-          return {
-            conflict: 'Email ini sudah terdaftar pada akun yang sudah ada. Silakan masuk atau gunakan email lain.',
-          };
+        const emailExists = state.users.some((u) => u.email.trim().toLowerCase() === email);
+        if (emailExists) {
+          return { conflict: 'Email ini sudah terdaftar pada akun yang sudah ada. Silakan masuk atau gunakan email lain.' };
         }
 
         const existingNisns = new Set(
@@ -638,11 +540,7 @@ async function startServer() {
       });
 
       if ('conflict' in result && result.conflict) {
-        return res.status(409).json({
-          success: false,
-          code: 'code' in result ? result.code : undefined,
-          message: result.conflict,
-        });
+        return res.status(409).json({ success: false, message: result.conflict });
       }
 
       broadcastRealtimeChange('profiles');
