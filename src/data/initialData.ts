@@ -1,4 +1,4 @@
-import { 
+import type { 
   User, 
   AlumniProfile, 
   CareerHistoryItem, 
@@ -12,9 +12,9 @@ import {
   AuditLog, 
   SchoolSettings,
   GuruBkProfile
-} from '../types';
-import { AVATAR_COWO, AVATAR_CEWE } from '../constants/avatars';
-import { DEFAULT_HERO_IMAGE, DEFAULT_SCHOOL_LOGO } from '../constants/assets';
+} from '../types/index.ts';
+import { AVATAR_COWO, AVATAR_CEWE } from '../constants/avatars.ts';
+import { DEFAULT_HERO_IMAGE, DEFAULT_SCHOOL_LOGO } from '../constants/assets.ts';
 
 export const INITIAL_SCHOOL_SETTINGS: SchoolSettings = {
   name: "SMK Negeri 1 Prestasi Nusantara",

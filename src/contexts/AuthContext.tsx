@@ -163,6 +163,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAlumniProfile(profile);
   };
 
+  const safeReadAuthJson = async (res: Response): Promise<Record<string, any> | null> => {
+    try {
+      const text = await res.text();
+      if (!text) return null;
+      return JSON.parse(text) as Record<string, any>;
+    } catch {
+      return null;
+    }
+  };
+
   const bootstrapAdmin = async (password: string): Promise<AuthResult> => {
     setIsSubmitting(true);
     try {
@@ -171,7 +181,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       });
-      const data = await res.json();
+      const data = await safeReadAuthJson(res);
+      if (!data) {
+        setIsSubmitting(false);
+        return {
+          success: false,
+          message: `Server autentikasi merespons tidak valid (HTTP ${res.status}).`,
+        };
+      }
       if (!res.ok || !data.success) {
         setIsSubmitting(false);
         return { success: false, message: data.message || 'Gagal menetapkan password Admin.' };
@@ -200,7 +217,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier: identifier.trim(), password }),
       });
-      const data = await res.json();
+      const data = await safeReadAuthJson(res);
+      if (!data) {
+        setIsSubmitting(false);
+        return {
+          success: false,
+          message: `Server aktivasi merespons tidak valid (HTTP ${res.status}).`,
+        };
+      }
       if (!res.ok || !data.success) {
         setIsSubmitting(false);
         return { success: false, message: data.message || 'Gagal mengaktivasi akun alumni.' };
@@ -232,7 +256,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier: cleanId, password }),
       });
-      const data = await res.json();
+      const data = await safeReadAuthJson(res);
+      if (!data) {
+        setIsSubmitting(false);
+        return {
+          success: false,
+          message: `Server autentikasi gagal merespons JSON (HTTP ${res.status}). Periksa koneksi database atau fungsi API server.`,
+        };
+      }
       if (!res.ok || !data.success) {
         setIsSubmitting(false);
         return {
@@ -276,7 +307,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           avatar: payload.avatar !== undefined ? payload.avatar : AVATAR_COWO,
         }),
       });
-      const data = await res.json();
+      const data = await safeReadAuthJson(res);
+      if (!data) {
+        setIsSubmitting(false);
+        return {
+          success: false,
+          message: `Server pendaftaran merespons tidak valid (HTTP ${res.status}).`,
+        };
+      }
       if (!res.ok || !data.success) {
         setIsSubmitting(false);
         return {

@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import express, { Request, Response, NextFunction, Express } from 'express';
+import express from 'express';
+import type { Request, Response, NextFunction, Express } from 'express';
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -11,15 +12,15 @@ import {
   pgOps,
   isNeonConfigured,
   isEphemeralStore,
-  StoredUser,
 } from './db.ts';
+import type { StoredUser } from './db.ts';
 import {
   DEFAULT_HERO_IMAGE,
   DEFAULT_SCHOOL_LOGO,
   resolveAssetUrl,
 } from '../constants/assets.ts';
 import { INITIAL_SCHOOL_SETTINGS } from '../data/initialData.ts';
-import {
+import type {
   User,
   AlumniProfile,
   CareerHistoryItem,

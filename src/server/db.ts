@@ -1,7 +1,8 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { Pool } from 'pg';
-import {
+import type {
   User,
   AlumniProfile,
   CareerHistoryItem,
@@ -58,14 +59,22 @@ export interface DatabaseState {
   emailLogs: EmailNotificationLog[];
 }
 
-const LOCAL_DB_PATH = path.join(process.cwd(), '.alumnitrack-db.json');
+const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const LOCAL_DB_PATH = IS_SERVERLESS
+  ? path.join(os.tmpdir(), '.alumnitrack-db.json')
+  : path.join(process.cwd(), '.alumnitrack-db.json');
 
 declare global {
   var _neonPgPool: Pool | undefined;
 }
 
+function getNormalizedDatabaseUrl(): string {
+  const raw = process.env.DATABASE_URL?.trim() || '';
+  return raw.replace(/^['"]|['"]$/g, '').trim();
+}
+
 function getPool(): Pool | null {
-  const connStr = process.env.DATABASE_URL?.trim();
+  const connStr = getNormalizedDatabaseUrl();
   if (!connStr) return null;
   if (!global._neonPgPool) {
     const isLocal = connStr.includes('localhost') || connStr.includes('127.0.0.1');
@@ -85,7 +94,7 @@ function getPool(): Pool | null {
 }
 
 export function isNeonConfigured(): boolean {
-  return Boolean(process.env.DATABASE_URL?.trim());
+  return Boolean(getNormalizedDatabaseUrl());
 }
 
 export function isEphemeralStore(): boolean {
@@ -199,9 +208,13 @@ function readLocalState(): DatabaseState {
 
 function writeLocalState(state: DatabaseState): void {
   localStateCache = state;
-  const tmpPath = `${LOCAL_DB_PATH}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
-  fs.renameSync(tmpPath, LOCAL_DB_PATH);
+  try {
+    const tmpPath = `${LOCAL_DB_PATH}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, LOCAL_DB_PATH);
+  } catch (err) {
+    console.warn('Local state persistence skipped (read-only/ephemeral FS):', (err as Error)?.message || err);
+  }
 }
 
 async function ensurePgInitialized(pool: Pool): Promise<void> {

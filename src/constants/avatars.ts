@@ -1,4 +1,4 @@
-import { DEFAULT_AVATAR_COWO, DEFAULT_AVATAR_CEWE } from './assets';
+import { DEFAULT_AVATAR_COWO, DEFAULT_AVATAR_CEWE } from './assets.ts';
 
 export const AVATAR_COWO = DEFAULT_AVATAR_COWO;
 export const AVATAR_CEWE = DEFAULT_AVATAR_CEWE;
